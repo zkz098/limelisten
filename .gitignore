@@ -1,0 +1,37 @@
+# ===== 二进制 / 大体积产物（绝不入库）=====
+# 注意：gitignore 不支持行尾注释 —— 规则后面写 "# ..." 会让整行失效（踩过）。
+
+# Rust 构建产物（8 GB）
+/target/
+
+# whisper-cli.exe + ggml 模型（2.9 GB），靠 `limelisten --tools` 定位
+/.tools/
+/tools/
+/models/
+
+# library.db + cache（16k wav / whisper json）
+/data/
+
+# 侦察用解码音频、频谱图、Python 脚本（535 MB）
+/.recon/
+
+# 用户素材（有版权）；如需入库可去掉这行
+/samples/
+
+# 音频与日志
+*.wav
+*.mp3
+*.m4a
+*.flac
+*.ogg
+*.log
+
+# Python 侦察脚本产物
+__pycache__/
+*.pyc
+
+# 工具与编辑器
+/.pi/
+.vscode/
+.idea/
+*.swp

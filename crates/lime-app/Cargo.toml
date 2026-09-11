@@ -1,0 +1,25 @@
+[package]
+name = "lime-app"
+version.workspace = true
+edition.workspace = true
+build = "build.rs"
+
+[[bin]]
+name = "limelisten"
+path = "src/main.rs"
+
+[dependencies]
+lime-core = { path = "../lime-core" }
+lime-audio = { path = "../lime-audio" }
+lime-analyze = { path = "../lime-analyze" }
+lime-asr = { path = "../lime-asr" }
+lime-store = { path = "../lime-store" }
+slint.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+crossbeam-channel.workspace = true
+rfd = "0.15"
+
+[build-dependencies]
+slint-build.workspace = true

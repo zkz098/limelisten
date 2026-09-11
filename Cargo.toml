@@ -1,0 +1,35 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+crossbeam-channel = "0.5"
+parking_lot = "0.12"
+log = "0.4"
+env_logger = "0.11"
+slint = "1.17"
+slint-build = "1.17"
+# 固定 0.5：0.6 是破坏性重构（AudioCodecParameters/AudioSpec/plane 等全新 API），
+# 而 0.5 是 rodio 等生态广泛使用的稳定 API，工程上更划算。见 docs/PLAN.md 备注。
+symphonia = { version = "0.5", default-features = false, features = [
+    "mp3", "wav", "flac", "ogg", "vorbis", "aac", "isomp4", "alac", "aiff", "pcm",
+] }
+cpal = "0.18"
+signalsmith-stretch = "0.1"
+rusqlite = { version = "0.40", features = ["bundled"] }
+hound = "3.5"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+panic = "abort"

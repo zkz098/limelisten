@@ -1,0 +1,220 @@
+import { VerticalBox, HorizontalBox, Button, Slider, ScrollView } from "std-widgets.slint";
+
+export struct ChapterRow {
+    title: string,
+    time-range: string,
+    level: int,        // 0 = 材料, 1 = 题
+    confidence: float,
+    low-confidence: bool,
+}
+
+export struct WordCell {
+    text: string,
+    start-ms: int,
+    idx: int,          // 在整句里的序号（点击跳转用）
+}
+
+export component MainWindow inherits Window {
+    title: "limelisten — 听力播放器";
+    width: 1280px;
+    height: 820px;
+    background: #f8fafc;
+
+    // ---- 数据 ----
+    in-out property <[ChapterRow]> chapters: [];
+    // 当前句的逐词（卡拉OK 高亮）。外层是“行”，由 Rust 侧按估算宽度折行，
+    // 因为 Slint 1.17 没有可用的自动换行布局。
+    in-out property <[[WordCell]]> lines: [];
+    in-out property <int> current: -1;
+    in-out property <int> active-word: -1;
+    in-out property <string> status: "就绪 · 打开一个音频文件";
+    in-out property <string> info: "";
+    in-out property <string> next-line: "";
+    in-out property <float> position: 0;
+    in-out property <float> duration: 1;
+    in-out property <bool> playing: false;
+    in-out property <int> loop-count: 0;
+    in-out property <bool> auto-pause: true;
+    in-out property <float> transcribe-progress: -1;   // <0 = 未在转写
+    in-out property <bool> has-subtitles: false;
+    in-out property <string> chime-info: "";
+    in-out property <string> underruns: "";
+
+    // ---- 命令 ----
+    callback open-file();
+    callback analyze();
+    callback transcribe();
+    callback play-pause();
+    callback prev-chapter();
+    callback next-chapter();
+    callback select-chapter(int);
+    callback seek-to(float);
+    callback speed-up();
+    callback speed-down();
+    callback loop-cycle();
+    callback toggle-auto-pause();
+    callback export-srt();
+    callback click-word(int);
+
+    VerticalLayout {
+        padding: 10px;
+        spacing: 8px;
+
+        // ================= 顶部工具条 =================
+        HorizontalLayout {
+            spacing: 8px;
+            height: 34px;
+            Button { text: "打开音频…"; clicked => { root.open-file(); } }
+            Button { text: "① 切分"; clicked => { root.analyze(); } }
+            Button {
+                text: root.transcribe-progress >= 0 ? "② 转写中…" : "② 转写字幕";
+                clicked => { root.transcribe(); }
+            }
+            Button { text: "导出 SRT"; clicked => { root.export-srt(); } }
+            Text {
+                text: root.status;
+                vertical-alignment: center;
+                horizontal-stretch: 1;
+                color: #334155;
+                overflow: elide;
+            }
+        }
+
+        // ================= 主体 =================
+        HorizontalLayout {
+            spacing: 10px;
+            vertical-stretch: 1;
+
+            // ---- 左：章节列表 ----
+            Rectangle {
+                width: 340px;
+                border-width: 1px;
+                border-color: #e2e8f0;
+                border-radius: 6px;
+                background: white;
+                VerticalLayout {
+                    padding: 6px;
+                    spacing: 4px;
+                    Text { text: "章节（材料 → 题）"; color: #64748b; height: 20px; }
+                    Text {
+                        text: root.chime-info;
+                        color: #94a3b8;
+                        font-size: 11px;
+                        height: 16px;
+                        overflow: elide;
+                    }
+                    ScrollView {
+                        VerticalLayout {
+                            for row[i] in root.chapters : Rectangle {
+                                height: row.level == 0 ? 30px : 26px;
+                                background: i == root.current ? #dbeafe : transparent;
+                                border-radius: 4px;
+                                HorizontalLayout {
+                                    padding-left: row.level == 0 ? 4px : 18px;
+                                    spacing: 6px;
+                                    Text {
+                                        text: row.title;
+                                        vertical-alignment: center;
+                                        color: row.low-confidence ? #b45309 : (row.level == 0 ? #0f172a : #334155);
+                                        font-weight: row.level == 0 ? 700 : 400;
+                                        horizontal-stretch: 1;
+                                        overflow: elide;
+                                    }
+                                    Text {
+                                        text: row.time-range;
+                                        vertical-alignment: center;
+                                        color: #64748b;
+                                        font-size: 11px;
+                                    }
+                                }
+                                TouchArea { clicked => { root.select-chapter(i); } }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // ---- 右：字幕 + 控制 ----
+            VerticalLayout {
+                spacing: 8px;
+                vertical-stretch: 1;
+
+                // 卡拉OK：逐词高亮 + 自动换行
+                Rectangle {
+                    vertical-stretch: 1;
+                    border-width: 1px;
+                    border-color: #e2e8f0;
+                    border-radius: 6px;
+                    background: white;
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+                        ScrollView {
+                            VerticalLayout {
+                                spacing: 4px;
+                                for line in root.lines : HorizontalLayout {
+                                    spacing: 6px;
+                                    for w in line : Rectangle {
+                                        background: w.idx == root.active-word ? #fde68a : transparent;
+                                        border-radius: 4px;
+                                        HorizontalLayout {
+                                            padding-left: 3px;
+                                            padding-right: 3px;
+                                            Text {
+                                                text: w.text;
+                                                color: w.idx == root.active-word ? #7c2d12 : #0f172a;
+                                                font-size: 22px;
+                                                font-weight: w.idx == root.active-word ? 700 : 400;
+                                            }
+                                        }
+                                        TouchArea { clicked => { root.click-word(w.idx); } }
+                                    }
+                                }
+                            }
+                        }
+                        Text {
+                            text: root.has-subtitles ? root.next-line : "（点“② 转写字幕”生成逐词字幕；无字幕时可先听切分好的题目）";
+                            color: #94a3b8;
+                            font-size: 17px;
+                            wrap: word-wrap;
+                            height: 46px;
+                            overflow: elide;
+                        }
+                    }
+                }
+
+                // 进度
+                Slider {
+                    value: root.position;
+                    minimum: 0;
+                    maximum: max(root.duration, 1);
+                    changed => { root.seek-to(self.value); }
+                }
+
+                // 控制条
+                HorizontalLayout {
+                    spacing: 8px;
+                    height: 36px;
+                    Button { text: "◀◀ 上一题"; clicked => { root.prev-chapter(); } }
+                    Button { text: root.playing ? "⏸ 暂停" : "▶ 播放"; clicked => { root.play-pause(); } }
+                    Button { text: "下一题 ▶▶"; clicked => { root.next-chapter(); } }
+                    Button { text: "− 慢"; clicked => { root.speed-down(); } }
+                    Button { text: "+ 快"; clicked => { root.speed-up(); } }
+                    Button { text: "循环 " + loop-count; clicked => { root.loop-cycle(); } }
+                    Button {
+                        text: root.auto-pause ? "题间暂停 ✓" : "题间暂停 ✗";
+                        clicked => { root.toggle-auto-pause(); }
+                    }
+                    Text {
+                        text: root.info;
+                        vertical-alignment: center;
+                        color: #64748b;
+                        font-size: 11px;
+                        horizontal-stretch: 1;
+                        overflow: elide;
+                    }
+                }
+            }
+        }
+    }
+}
