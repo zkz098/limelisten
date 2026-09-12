@@ -36,6 +36,19 @@ fn main() -> anyhow::Result<()> {
             let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             cli::cmd_transcribe(f, n)
         }
+        Some("--limed") => {
+            let f = args.get(1).expect("用法: limelisten --limed <音频>");
+            cli::cmd_export_limed(f)?;
+            Ok(())
+        }
+        Some("--show-limed") => {
+            let f = args.get(1).expect("用法: limelisten --show-limed <limed文件>");
+            cli::cmd_show_limed(f)
+        }
+        Some("--benchmark") | Some("--bench") => {
+            let sample = args.get(1).map(|s| s.as_str());
+            cli::cmd_benchmark(sample)
+        }
         Some("--playtest") => {
             let f = args.get(1).expect("用法: limelisten --playtest <音频>");
             playtest(Path::new(f))
@@ -51,6 +64,9 @@ fn main() -> anyhow::Result<()> {
                  --analyze <音频>            切分报告\n\
                  --assert <音频>...          P0 自动断言（exit 0 = 全绿）\n\
                  --transcribe <音频> [句数]  只跑 ASR 链路\n\
+                 --limed <音频>              预切分与转译并打包为同名 .limed 缓存\n\
+                 --show-limed <limed文件>    查看 .limed 缓存内容\n\
+                 --bench [音频]              Whisper 转写性能测速 (3:1 标准与防卡死熔断)\n\
                  --playtest <音频>           播放引擎自测\n\
                  --tools                     打印 whisper/模型定位"
             );

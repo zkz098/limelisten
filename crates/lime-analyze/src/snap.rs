@@ -36,19 +36,42 @@ pub enum SnapMode {
     Off,
 }
 
-/// 默认策略：优先地标，其次仿射（在 `snap_with_landmarks` 里决定）
-pub fn snap_words_to_speech(words: &[Word], structure: &Structure) -> Vec<Word> {
-    snap_by_mode(words, structure, SnapMode::Affine)
+/// 安全词时间戳校准：
+/// 1. 修正起始静音：若首词 start_ms == 0，而真实首个语音岛在 t0 (如 3056 ms) 才开始，将首词平移至 t0；
+/// 2. 保持真实物理语速 1.0x，保留 Whisper 原生 10ms 帧精度（严禁将人声强行吸附到叮咚铃声，杜绝提前 1~3 秒错误）；
+/// 3. 严格单调递增，杜绝时钟倒流。
+pub fn align_words_safe(words: &[Word], structure: &Structure) -> Vec<Word> {
+    if words.is_empty() {
+        return Vec::new();
+    }
+    let mut out = words.to_vec();
+    if let Some(&(first_speech_start, _)) = structure.speech.first() {
+        if out[0].start_ms == 0 && first_speech_start > 500 {
+            let offset = first_speech_start;
+            out[0].start_ms = offset;
+            out[0].end_ms = out[0].end_ms.max(offset + 100);
+        }
+    }
+    let mut last_end = 0u64;
+    for w in out.iter_mut() {
+        if w.start_ms < last_end {
+            let len = w.end_ms.saturating_sub(w.start_ms).max(50);
+            w.start_ms = last_end;
+            w.end_ms = w.start_ms + len;
+        }
+        last_end = w.start_ms;
+    }
+    out
 }
 
-/// 推荐入口：有地标就用地标，否则仿射兜底
-pub fn snap_with_landmarks(words: &[Word], structure: &Structure, chimes: &[Chime]) -> Vec<Word> {
-    let pairs = landmark_pairs(words, structure, chimes);
-    if pairs.len() >= 2 {
-        apply_line(words, structure, fit_line(&pairs))
-    } else {
-        snap_by_mode(words, structure, SnapMode::Affine)
-    }
+/// 默认策略：保持 Whisper 高精度原生时间戳，校准开头静音
+pub fn snap_words_to_speech(words: &[Word], structure: &Structure) -> Vec<Word> {
+    align_words_safe(words, structure)
+}
+
+/// 推荐入口：校准时间戳，消除误配叮咚产生的 1~3 秒人为提前漂移
+pub fn snap_with_landmarks(words: &[Word], structure: &Structure, _chimes: &[Chime]) -> Vec<Word> {
+    align_words_safe(words, structure)
 }
 
 pub fn snap_by_mode(words: &[Word], structure: &Structure, mode: SnapMode) -> Vec<Word> {
@@ -170,6 +193,70 @@ pub fn clamp_into_speech(words: &[Word], structure: &Structure) -> Vec<Word> {
     out
 }
 
+/// 分段线性插值映射：基于匹配的地标点序列进行逐段对齐，两端平滑外推
+pub fn apply_piecewise_linear(
+    words: &[Word],
+    structure: &Structure,
+    pairs: &[(u64, u64)],
+) -> Vec<Word> {
+    if pairs.len() < 2 {
+        return words.to_vec();
+    }
+    let lo = structure.speech.first().map(|s| s.0).unwrap_or(0) as f64;
+    let hi = structure.speech.last().map(|s| s.1).unwrap_or(0) as f64;
+    let hi = hi.max(lo);
+
+    let k_first = {
+        let (x0, y0) = pairs[0];
+        let (x1, y1) = pairs[1];
+        let dx = (x1 as f64 - x0 as f64).max(1.0);
+        ((y1 as f64 - y0 as f64) / dx).clamp(0.5, 2.0)
+    };
+    let k_last = {
+        let n = pairs.len();
+        let (x0, y0) = pairs[n - 2];
+        let (x1, y1) = pairs[n - 1];
+        let dx = (x1 as f64 - x0 as f64).max(1.0);
+        ((y1 as f64 - y0 as f64) / dx).clamp(0.5, 2.0)
+    };
+
+    let map_time = |t: u64| -> u64 {
+        let t_f = t as f64;
+        let mapped = if t <= pairs[0].0 {
+            // 前端外推
+            pairs[0].1 as f64 - k_first * (pairs[0].0 as f64 - t_f)
+        } else if t >= pairs.last().unwrap().0 {
+            // 后端外推
+            pairs.last().unwrap().1 as f64 + k_last * (t_f - pairs.last().unwrap().0 as f64)
+        } else {
+            // 找到区间 pairs[i].0 <= t <= pairs[i+1].0
+            let mut val = t_f;
+            for i in 0..pairs.len() - 1 {
+                let (x0, y0) = pairs[i];
+                let (x1, y1) = pairs[i + 1];
+                if t >= x0 && t <= x1 {
+                    let dx = (x1 as f64 - x0 as f64).max(1.0);
+                    let frac = (t_f - x0 as f64) / dx;
+                    val = y0 as f64 + frac * (y1 as f64 - y0 as f64);
+                    break;
+                }
+            }
+            val
+        };
+        mapped.clamp(lo, hi).round().max(0.0) as u64
+    };
+
+    let mapped: Vec<Word> = words
+        .iter()
+        .map(|w| {
+            let s = map_time(w.start_ms);
+            let e = map_time(w.end_ms).max(s + 10);
+            Word { start_ms: s, end_ms: e, text: w.text.clone() }
+        })
+        .collect();
+    clamp_into_speech(&mapped, structure)
+}
+
 /// 地标配对：(whisper 侧念白时刻, 真实侧叮咚时刻)
 pub fn landmark_pairs(words: &[Word], structure: &Structure, chimes: &[Chime]) -> Vec<(u64, u64)> {
     let spoken = spoken_material_markers(words);
@@ -189,98 +276,125 @@ pub fn landmark_pairs(words: &[Word], structure: &Structure, chimes: &[Chime]) -
         g.sort_unstable();
         real = g;
     }
-    if spoken.len() < 2 || real.len() < 2 {
+    if spoken.is_empty() || real.is_empty() {
         return Vec::new();
     }
 
-    // 枚举偏移，用**稳健拟合**评分：
-    // 1. 至少 3 对（2 对总能“完美拟合”，会造成退化）；
-    // 2. k 用“相邻配对斜率的中位数”估计，并要求 ≥60% 的斜率与之接近（否则该对齐不可信）；
-    // 3. a 取中位数，残差取中位数。
-    let mut best: Option<(i64, usize, Vec<(u64, u64)>)> = None;
-    let max_off = real.len().saturating_sub(3);
-    for off in 0..=max_off {
-        let n = spoken.len().min(real.len() - off);
-        if n < 3 {
+    align_markers_dtw(&spoken, &real, words, structure)
+}
+
+/// 单调序列动态规划对齐（Needleman-Wunsch / DTW 变种）：
+/// 寻找 spoken 与 real 的单调子序列匹配，允许跳过叮咚/念白，同时强制局部斜率在 [0.65, 1.6] 合理物理区间内。
+fn align_markers_dtw(
+    spoken: &[u64],
+    real: &[u64],
+    words: &[Word],
+    structure: &Structure,
+) -> Vec<(u64, u64)> {
+    let m = spoken.len();
+    let n = real.len();
+    if m == 0 || n == 0 {
+        return Vec::new();
+    }
+
+    // 粗粒度基线预测器（首尾仿射）
+    let (a_base, k_base) = match fit_affine(words, structure) {
+        Some(f) if f.k > 0.5 && f.k < 2.0 => (f.a_ms, f.k),
+        _ => (0.0, 1.0),
+    };
+    let predict = |s: u64| -> f64 { a_base + k_base * s as f64 };
+
+    const SKIP_S_COST: f64 = 6000.0;
+    const SKIP_R_COST: f64 = 3000.0;
+    const MAX_ABS_DIFF: f64 = 25000.0; // 允许的最大漂移 25 秒
+
+    // dp[i][j] = 以 (spoken[i], real[j]) 作为匹配对时的最小累计代价
+    // parent[i][j] = 上一个匹配对的坐标 (i', j')，或 None
+    let mut dp = vec![vec![f64::INFINITY; n]; m];
+    let mut parent = vec![vec![None; n]; m];
+
+    for i in 0..m {
+        for j in 0..n {
+            let diff = (predict(spoken[i]) - real[j] as f64).abs();
+            if diff > MAX_ABS_DIFF {
+                continue;
+            }
+            let match_cost = diff;
+
+            // 情况 1: (i, j) 作为首个匹配对
+            let init_cost = (i as f64) * SKIP_S_COST + (j as f64) * SKIP_R_COST + match_cost;
+            dp[i][j] = init_cost;
+
+            // 情况 2: 从之前的某个匹配对 (pi, pj) 转移过来
+            for pi in 0..i {
+                for pj in 0..j {
+                    let prev_cost = dp[pi][pj];
+                    if !prev_cost.is_finite() {
+                        continue;
+                    }
+                    let dx = (spoken[i] as i64 - spoken[pi] as i64) as f64;
+                    let dy = (real[j] as i64 - real[pj] as i64) as f64;
+                    if dx < 100.0 || dy < 100.0 {
+                        continue;
+                    }
+                    let slope = dy / dx;
+                    // 局部斜率约束：必须符合合理的语速/静音伸缩范围
+                    if slope >= 0.65 && slope <= 1.6 {
+                        let skipped_s = (i - pi - 1) as f64 * SKIP_S_COST;
+                        let skipped_r = (j - pj - 1) as f64 * SKIP_R_COST;
+                        let cost = prev_cost + skipped_s + skipped_r + match_cost;
+                        if cost < dp[i][j] {
+                            dp[i][j] = cost;
+                            parent[i][j] = Some((pi, pj));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // 寻找以任意 (i, j) 结尾加上尾部 skip 惩罚后的全局最优解
+    let mut best_total = f64::INFINITY;
+    let mut best_end = None;
+
+    for i in 0..m {
+        for j in 0..n {
+            let c = dp[i][j];
+            if c.is_finite() {
+                let tail_cost = (m - 1 - i) as f64 * SKIP_S_COST + (n - 1 - j) as f64 * SKIP_R_COST;
+                let total = c + tail_cost;
+                if total < best_total {
+                    best_total = total;
+                    best_end = Some((i, j));
+                }
+            }
+        }
+    }
+
+    let Some(mut cur) = best_end else {
+        return Vec::new();
+    };
+
+    let mut path = Vec::new();
+    loop {
+        path.push((spoken[cur.0], real[cur.1]));
+        if let Some(prev) = parent[cur.0][cur.1] {
+            cur = prev;
+        } else {
             break;
         }
-        let pairs: Vec<(u64, u64)> = (0..n).map(|i| (spoken[i], real[off + i])).collect();
-        let Some((a, k)) = robust_line(&pairs) else { continue };
-        let q = (median_abs_residual(&pairs, a, k) / 100.0).round() as i64;
-        let better = match &best {
-            None => true,
-            Some((bq, bn, _)) => q < *bq || (q == *bq && n > *bn),
-        };
-        if better {
-            best = Some((q, n, pairs));
-        }
     }
-    match best {
-        Some((q, _, pairs)) if q < 15 => pairs, // 中位残差 < 1.5 s 才敢用
-        _ => Vec::new(),
-    }
-}
+    path.reverse();
 
-/// 稳健直线拟合：k = 相邻斜率中位数（要求 ≥60% 聚在 k 附近 ±15%），a = 截距中位数
-fn robust_line(pairs: &[(u64, u64)]) -> Option<(f64, f64)> {
-    if pairs.len() < 3 {
-        return None;
+    if path.len() >= 2 {
+        path
+    } else {
+        Vec::new()
     }
-    let mut ks: Vec<f64> = pairs
-        .windows(2)
-        .map(|w| {
-            let dx = (w[1].0 as i64 - w[0].0 as i64) as f64;
-            let dy = (w[1].1 as i64 - w[0].1 as i64) as f64;
-            if dx.abs() < 1.0 {
-                f64::NAN
-            } else {
-                dy / dx
-            }
-        })
-        .filter(|k| k.is_finite() && *k > 0.2 && *k < 5.0)
-        .collect();
-    if ks.len() < 2 {
-        return None;
-    }
-    ks.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-    let k = ks[ks.len() / 2];
-    let inliers = ks.iter().filter(|x| ((**x - k) / k).abs() < 0.15).count();
-    if inliers * 100 / ks.len() < 60 {
-        return None; // 多数斜率不一致 ⇒ 这组配对不可信
-    }
-    let mut accs: Vec<f64> = pairs.iter().map(|(w, r)| *r as f64 - k * (*w as f64)).collect();
-    accs.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-    Some((accs[accs.len() / 2], k))
-}
-
-fn median_abs_residual(pairs: &[(u64, u64)], a: f64, k: f64) -> f64 {
-    let mut errs: Vec<f64> = pairs
-        .iter()
-        .map(|(w, r)| (a + k * (*w as f64) - (*r as f64)).abs())
-        .collect();
-    errs.sort_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal));
-    errs[errs.len() / 2]
-}
-
-fn fit_line(pairs: &[(u64, u64)]) -> (f64, f64) {
-    let n = pairs.len() as f64;
-    let sx: f64 = pairs.iter().map(|(w, _)| *w as f64).sum();
-    let sy: f64 = pairs.iter().map(|(_, r)| *r as f64).sum();
-    let sxx: f64 = pairs.iter().map(|(w, _)| (*w as f64) * (*w as f64)).sum();
-    let sxy: f64 = pairs.iter().map(|(w, r)| (*w as f64) * (*r as f64)).sum();
-    let denom = n * sxx - sx * sx;
-    let k = if denom.abs() < 1e-6 { 1.0 } else { (n * sxy - sx * sy) / denom };
-    let k = if k.is_finite() && k > 0.2 && k < 5.0 { k } else { 1.0 };
-    ((sy - k * sx) / n, k)
-}
-
-fn median_residual(pairs: &[(u64, u64)]) -> f64 {
-    let (a, k) = fit_line(pairs);
-    median_abs_residual(pairs, a, k)
 }
 
 /// 诊断字符串（CLI 用）
-pub fn landmark_diagnosis(words: &[Word], chimes: &[Chime]) -> String {
+pub fn landmark_diagnosis(words: &[Word], structure: &Structure, chimes: &[Chime]) -> String {
     let spoken = spoken_material_markers(words);
     let mut real: Vec<u64> = chimes
         .iter()
@@ -289,21 +403,18 @@ pub fn landmark_diagnosis(words: &[Word], chimes: &[Chime]) -> String {
         .collect();
     real.sort_unstable();
     let mut s = format!("念白标记(ms): {spoken:?}\n强叮咚(ms):   {real:?}\n");
-    for off in 0..=real.len().saturating_sub(2) {
-        let n = spoken.len().min(real.len() - off);
-        if n < 3 {
-            break;
+    let pairs = landmark_pairs(words, structure, chimes);
+    if pairs.is_empty() {
+        s.push_str("  DTW单调对齐未找到有效配对（将回退为仿射）\n");
+    } else {
+        s.push_str(&format!("  DTW单调对齐成功（{} 对）：\n", pairs.len()));
+        for (w, r) in &pairs {
+            let diff = *r as i64 - *w as i64;
+            s.push_str(&format!(
+                "    whisper {:>9} ms  ->  真实 {:>9} ms (Δ = {:+6} ms)\n",
+                w, r, diff
+            ));
         }
-        let pairs: Vec<(u64, u64)> = (0..n).map(|i| (spoken[i], real[off + i])).collect();
-        let line = robust_line(&pairs);
-        let desc = match line {
-            Some((a, k)) => format!(
-                "中位残差 {:.0} ms k={k:.4} a={a:.0}",
-                median_abs_residual(&pairs, a, k)
-            ),
-            None => "斜率不一致（不可信）".to_string(),
-        };
-        s.push_str(&format!("  offset {off}（{n} 对）{desc}\n"));
     }
     s
 }

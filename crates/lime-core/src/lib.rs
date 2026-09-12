@@ -12,9 +12,14 @@ pub enum Error {
     Asr(String),
     #[error("store: {0}")]
     Store(String),
+    #[error("limed: {0}")]
+    Limed(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+pub mod limed;
+pub use limed::{find_accompanying_audio, find_matching_limed, LimedFile, LimedMeta};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Media {

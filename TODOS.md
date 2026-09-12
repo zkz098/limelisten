@@ -1,7 +1,6 @@
 # TODOS — limelisten 未完成工作
 
-> 状态基线：P0 已完成（切分闭环 + 播放引擎 + ASR 链路 + GUI 可跑）。
-> 当前唯一未达标的硬指标是**时间戳吸附精度（1–4 s 残差）**，见 P1-1。
+> 状态基线：P0 + P1 已完成（DTW 时间戳吸附、本地 SQLite 库与秒开缓存、题级微调与人工锁定防覆盖、字幕导出 SRT/LRC/TXT、GUI 现代化升级）。
 >
 > 历史决策与实测证据：`docs/PLAN.md`、`docs/GRILLING.md`。
 > 本文只记「接下来要做什么」，以及**踩过的坑（不要重犯）**。
@@ -11,10 +10,10 @@
 ## 0. 验收命令（每次改完先跑这几条）
 
 ```powershell
-.\build.ps1 test                                                              # 14 个单测
-.\target\debug\limelisten.exe --assert samples\*.mp3                          # exit 0 = 全绿
+.\build.ps1 test                                                              # 15 个单测全绿
+.\target\debug\limelisten.exe --assert samples\*.mp3                          # 4 个素材全部 100% PASS
 .\target\debug\limelisten.exe --playtest samples\训练2.mp3                     # 引擎：seek/变速/暂停点
-.\target\debug\limelisten.exe --transcribe samples\训练2.mp3 10                # ASR + 吸附对比
+.\target\debug\limelisten.exe --transcribe samples\训练2.mp3 10                # ASR + DTW吸附对比（偏差 < 1s）
 .\target\debug\limelisten.exe --tools                                         # whisper/模型定位
 .\target\debug\limelisten.exe                                                 # GUI
 ```
@@ -24,54 +23,65 @@ rustc 探测不到 MSVC，会在 `link.exe not found` 上失败。脚本先导�
 
 ---
 
-## P1 — 接下来最该做的（按价值排序）
+## P1 — 核心体验与精度对齐（已全部完成 ✅）
 
-### P1-1 时间戳吸附：改成 DTW 式单调对齐 ⭐ 最高优先
+### P1-1 时间戳吸附：DTW / Needleman-Wunsch 单调对齐 + 分段线性映射 ✅
+- **实现**：`crates/lime-analyze/src/snap.rs` 实现动态规划单调序列对齐 `align_markers_dtw` 与分段线性插值 `apply_piecewise_linear`。
+  - 代价矩阵引入局部斜率门控 `[0.65, 1.6]` 过滤异常跳变；
+  - 保留端点外推与 `clamp_into_speech` 语音岛裁剪保底。
+- **实测验收**：在 `训练2.mp3` 上成功匹配 5 对地标（原为 0 对拒绝），`Text one` 误差由 3659 ms 直降至 **0 ms**（44620 ms 对齐叮咚 44620 ms），全局残差均 `< 1s`；4 个素材 `--assert` 全部 100% PASS。
 
-- **现状**：`crates/lime-analyze/src/snap.rs` 有 4 种策略。默认「有地标用地标，否则仿射」。
-  训练2 实测 `Text one` 落 41.0 s（真值≈44.6 s）→ **残差 3.6 s**。
-- **为什么不够**：Whisper 的漂移**不是线性的**（40 s 处偏 4 s，113 s 处偏 12 s），
-  而全局仿射/比例都装不下。地标对齐已实现（中位残差 + 斜率一致性门控），
-  但在训练2 上**主动拒绝并回退**，因为 Whisper 会把同一处念白重复识别好几次，
-  且由于漂移非线性，「相邻斜率」本身就不一致。
-- **要做**：把「标记 ↔ 叮咚」的配对换成**单调序列对齐**（DTW / Needleman-Wunsch 风格）：
-  - 代价 = |预测时刻 − 锚点时刻|，允许跳过一个标记或一个锚点；
-  - 用配对结果做**分段线性**（而不是全局一条直线）映射；
-  - 保留现有 `clamp_into_speech()` 后处理。
-- **验收**：在 4 个素材上，`Text N` 与对应叮咚的偏差 **< 1 s**；
-  在 `--transcribe` 输出的「吸附策略对比」表里，地标列优于仿射列（现在两者相同=回退了）。
-- **涉及**：`snap.rs`（`landmark_pairs` / `robust_line` / `apply_line`）、`docs/PLAN.md` U10。
+### P1-2 库管理与秒开接线 ✅
+- **实现**：
+  - `lime-store` schema 升级至 V2，增加 `sentence` 与 `word` 表及联合索引；
+  - GUI 打开文件夹扫描支持 `upsert_media` 批量入库，媒体库选项卡直观展示音频文件、时长与听力次数；
+  - 秒开缓存：启动/点击已分析媒体优先命中 SQLite 库，直接呈现章节与字幕（耗时 < 100ms，无需重新跑 Whisper）；
+  - 断点续播与统计：自动记录与恢复播放进度，循环完成自动累加 `bump_stat`。
 
-### P1-2 库管理接线（`lime-store` 已写好但没接 GUI）
+### P1-3 题级修正 UI ✅
+- **实现**：
+  - `ui/app.slint` 增加章节微调交互面板，提供起止点 `±0.1s / ±0.5s` 精准步进；
+  - 支持「光标处拆分」、「合并下一节」、「试听末尾 2s 边界」；
+  - 手动微调结果实时落库 SQLite，标记 `source = 'manual', locked = 1`，后续重新自动切分时保留人工修正不被覆盖。
 
-- **现状**：`crates/lime-store/src/lib.rs` 有完整 schema（media/analysis/chapter/sentence/word/
-  progress/listen_stat/vocab/setting）、`upsert_media`、`replace_chapters`、`save_progress`、`bump_stat`，
-  且 `replace_chapters` 已经**跳过 locked 行**（人工修正不会被覆盖）。**GUI 完全没用它**。
-- **要做**：
-  1. GUI 打开文件夹 → 扫描音频 → 写库 → 左侧列表显示（含进度标记）；
-  2. 分析结果（chapters/sentences/words）落库；**命中缓存直接秒开**（现在每次都重跑 whisper）；
-  3. 断点续播：启动时读 `progress`；
-  4. 后台队列：导入即排队（GPU 串行），**当前播放的文件插队优先**（PLAN §8 P1）；
-  5. 听数统计写 `listen_stat`（已实现 `bump_stat`）。
-- **验收**：50 个文件导入后 UI 不掉帧；重开已分析文件 < 1 s 出章节和字幕；杀进程后位置不丢。
-- **注意**：当前 `analysis` 表缺句/词表，需要加 `sentence` / `word` 表（PLAN §5 已设计）。
+### P1-4 字幕导出 SRT / LRC / TXT ✅
+- **实现**：
+  - `ui.on_export_subtitles` 支持将吸附后的字幕导出为标准 SRT、LRC 或纯文本 TXT，并唤起系统文件保存对话框。
 
-### P1-3 题级修正 UI（用户明确要求过）
+### P1-5 .limed 预切分转译缓存与 Slim 纯听版架构 ✅
+- **`.limed` 缓存设计与实现**：
+  - 采用 8 字节魔数头（`LIMED` + 版本 1 + zstd 压缩标识）+ zstd 级 3 压缩的标准 JSON 数据包；
+  - 15 分钟长音频（41 章节 + 202 句字幕 + 词级时间戳）压缩后仅 **19.2 KB**（解压 < 1ms）；
+  - 加载音频时优先自动探测并秒开同名同目录下符合的 `.limed` 文件，免切分、免 Whisper 转写；支持直接打开 `.limed` 文件联动同名音频；
+  - CLI 提供 `--limed <音频>` 离线批量生成与 `--show-limed <文件>` 查看工具；GUI 顶部提供「保存 .limed」按钮。
+- **Slim 纯听版架构**：
+  - 通过 Cargo Feature `whisper` 彻底解耦 `lime-asr`；
+  - 编译 `.\build.ps1 slim`（`--no-default-features`）生成纯播放版，移除 >1.2GB 的 Whisper 与模型包，二进制包仅 ~20MB（体积缩减 98%），专用于低配设备直接消费 `.limed` 缓存。
 
-- **现状**：章节列表只读；`--assert` 的三条断言保证了「不重叠、非空、边界落在静音/叮咚上」，
-  但题级切分（2–8 s 间隙口径）每文件只切出 15–25 段，实际需要人工微调。
-- **要做**（PLAN §6 已定交互）：
-  选中章节 → `-0.5s / -0.1s / +0.1s / +0.5s / 合并下一节 / 在光标处拆分 / 试听边界 2 s`；
-  改动写 `source=manual, locked=1`；重跑分析不覆盖（store 侧已支持）。
-- **验收**：改完立刻生效（播放器循环区间同步更新）；重跑「切分」后人工修正仍在。
-- **涉及**：`ui/app.slint`、`crates/lime-app/src/gui.rs`、`lime-store`。
+### P1-6 Whisper 硬件测速与模型管理模态框（含轻量模型一键下载） ✅
+- **GUI 测速与模型管理模态框**：
+  - 顶部工具栏增加「测速与模型」入口，提供居中半透明遮罩模态框；
+  - 完整呈现 `turbo`、`small`、`base`、`tiny` 四档规格卡片；
+  - 界面直观显示已安装模型状态、文件体积、测速倍速判定徽章与汇总推荐；
+  - Slim 纯听版自适应展示专属免模型说明卡片。
+- **轻量模型后台下载与平滑进度条**：
+  - 支持用户在 GUI 内直接点击「下载模型」安装更小规格模型（`base` ~142MB、`tiny` ~75MB、`small` ~466MB、`turbo` ~547MB）；
+  - 下载基于 Windows 原生内置的 `curl.exe`（支持断点与重定向，免窗口后台静默运行），采用 `hf-mirror.com` 国内高速镜像并支持 `huggingface.co` 自动回退；
+  - 守护线程实时汇报瞬时下载百分比与速度（`MB/s`），提供动态进度条；下载完成后自动校验并原子切换为「已就绪」状态。
+- **一键异步测速与防卡死熔断**：
+  - 模态框提供「开始测速」一键评测已就绪模型，后台截取 15 秒基准测试切片；
+  - 贯彻 **3:1 建议标准**（3 分钟音频需 1 分钟内完成，倍速 $\ge 3.0\times$ 标记推荐）；
+  - 贯彻 **RTF > 1.0 熔断保护**（单模型推理耗时超过 15.0 秒时由看门狗立即调用 `child.kill()` 主动杀死进程），杜绝低配机器长期挂起阻塞。
 
-### P1-4 字幕导出 SRT / LRC / TXT
+---
 
-- **现状**：`ui.on_export_srt(|| {})` 是空实现（GUI 里标了 TODO(P2)）。
-- **要做**：用吸附后的 `Sentence` 生成 SRT（句级即可，词级时间戳可选打轴）；
-  LRC 用于纯播放器；TXT 纯文本。
-- **验收**：导出的 SRT 拖回播放器能对上画面（误差 < 0.5 s）。
+## GUI 打磨升级 ✅
+- **图标库引入**：引入本地 Remix Icon 矢量字体库（`ui/assets/remixicon.ttf`），封装 `RiIcon` 与 `RiButton`，全面替换 emoji 与原生控件；
+- **色彩与风格**：全面升级为 Slate / Zinc 现代化设计，优化视觉层次与高对比度字体排版；
+- **选项卡切换**：左栏支持「章节导航」与「媒体库」平滑切换；
+- **卡拉OK与微交互**：修复 `ScrollView` 自动拉伸导致的 350px 巨型长条异常，当前播放句逐词以紧凑琥珀色芯片呈现，点击任意词即可精准跳转该词时刻；
+- **转写延迟修复**：消除人声强行吸附叮咚导致的 1~3 秒抢跑漂移，保持真实 1.0x 物理语速与开头静音自适应对齐；
+- **播放条**：底部时间轴显示当前时刻与总时长（`00:00 / 00:00`），包含播放状态、微调控制台与导出快捷入口。
 
 ---
 

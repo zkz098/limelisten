@@ -28,6 +28,7 @@ cpal = "0.18"
 signalsmith-stretch = "0.1"
 rusqlite = { version = "0.40", features = ["bundled"] }
 hound = "3.5"
+zstd = "0.13"
 
 [profile.release]
 lto = "thin"

@@ -7,14 +7,15 @@
 # 用法：  .\build.ps1              # cargo build
 #         .\build.ps1 run          # cargo run
 #         .\build.ps1 build --release
-param(
-    [Parameter(ValueFromRemainingArguments = $true)]
-    [string[]]$CargoArgs
-)
-
 $ErrorActionPreference = 'Stop'
 
+$IsSlim = $false
+$CargoArgs = @($args)
 if (-not $CargoArgs -or $CargoArgs.Count -eq 0) { $CargoArgs = @('build') }
+if ($CargoArgs[0] -eq 'slim') {
+    $IsSlim = $true
+    $CargoArgs = @('build', '-p', 'lime-app', '--no-default-features', '--release')
+}
 
 $vcvars = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" -ErrorAction SilentlyContinue |
     Select-Object -First 1 -ExpandProperty FullName
@@ -39,4 +40,17 @@ if (-not $cargo) { $cargo = "$env:USERPROFILE\.cargo\bin\cargo.exe" }
 
 Write-Host "== cargo $($CargoArgs -join ' ')"
 & $cargo @CargoArgs
-exit $LASTEXITCODE
+$code = $LASTEXITCODE
+
+if ($code -eq 0 -and $IsSlim) {
+    $srcExe = "target\release\limelisten.exe"
+    $dstExe = "target\release\limelisten-slim.exe"
+    if (Test-Path $srcExe) {
+        Copy-Item -Path $srcExe -Destination $dstExe -Force
+        $len = (Get-Item $dstExe).Length
+        $mb = [math]::Round($len / 1MB, 2)
+        Write-Host "== ✅ 已生成 Slim 独立可执行文件: $dstExe ($mb MB)" -ForegroundColor Green
+    }
+}
+
+exit $code
