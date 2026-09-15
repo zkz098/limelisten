@@ -13,6 +13,7 @@ use lime_asr::{group_sentences, WhisperCli};
 use lime_audio::{render::write_wav, resample::LinearResampler};
 use lime_audio::AudioInfo;
 use lime_core::{Chapter, ChapterLevel, LimedFile, LimedMeta, Sentence, Word};
+use lime_store::Store;
 use std::path::{Path, PathBuf};
 #[cfg(feature = "whisper")]
 use std::sync::atomic::AtomicBool;
@@ -52,7 +53,7 @@ pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCo
     structure.has_digital_silence =
         !lime_analyze::digital_silence_spans(&mono, info.sample_rate, 500).is_empty();
 
-    progress("检测叮咚标记…");
+    progress("分析音频分段…");
     let chimes = detect_chimes(&mono, info.sample_rate, &params.chime);
 
     progress("构建章节…");
@@ -235,16 +236,7 @@ pub fn cmd_analyze(file: &str) -> Result<()> {
         );
     }
     println!("章节:");
-    for c in &core.chapters {
-        let indent = if c.level == ChapterLevel::Material { "" } else { "    " };
-        println!(
-            "{indent}{:<12} {:>9} – {:>9}  conf={:.2}",
-            c.title,
-            fmt_ms(c.start_ms),
-            fmt_ms(c.end_ms),
-            c.confidence
-        );
-    }
+    print_chapter_tree(&core.chapters, usize::MAX);
     Ok(())
 }
 
@@ -505,6 +497,80 @@ pub fn fmt_ms(ms: u64) -> String {
     format!("{m:02}:{s:02}.{:01}", (ms % 1000) / 100)
 }
 
+/// 打印两级章节树（与左侧导航同构，用于核对材料/题是否归位）。
+pub fn print_chapter_tree(chapters: &[Chapter], limit: usize) {
+    let n_mat = chapters.iter().filter(|c| c.is_material()).count();
+    println!(
+        "  共 {} 节：{} 材料 / {} 题 · 规范顺序 {}",
+        chapters.len(),
+        n_mat,
+        chapters.len() - n_mat,
+        if lime_core::chapters_are_canonical(chapters) { "✓" } else { "✗ (需要 normalize)" }
+    );
+    for c in chapters.iter().take(limit) {
+        let indent = if c.is_material() { "" } else { "    " };
+        println!(
+            "  {indent}{:?} {:<22} {:>9} – {:>9}  conf={:.2}{}",
+            c.seq,
+            c.title,
+            fmt_ms(c.start_ms),
+            fmt_ms(c.end_ms),
+            c.confidence,
+            if c.locked { " [人工锁定]" } else { "" }
+        );
+    }
+    if chapters.len() > limit {
+        println!("  ... 以及其他 {} 个章节", chapters.len() - limit);
+    }
+}
+
+/// `--chapters <音频>`：按左侧导航的读法（本地库 chapter 表）打印两级章节树。
+///
+/// 用途：不启动 GUI 也能核对「材料 → 其题」是否归位（旧版这里会把所有材料挤到最前、
+/// 把所有材料的"第 1 题"排在一起）。首次运行会顺便把老库迁移到 V3（补 `chapter.seq`）。
+pub fn cmd_chapters(file: &str) -> Result<()> {
+    let path = std::fs::canonicalize(file).map_err(|e| anyhow!("找不到文件 {file}: {e}"))?;
+    let full = path.to_string_lossy().to_string();
+    // Windows canonicalize 会带上 `\\?\` 扩展前缀，而入库时存的是普通路径
+    let key = full.strip_prefix(r"\\?\").unwrap_or(&full).to_string();
+    let db_path = crate::paths::data_dir().join("library.db");
+    if !db_path.is_file() {
+        return Err(anyhow!(
+            "本地库还不存在（{}）；先在 GUI 里打开一次该音频，或跑 --limed 生成缓存",
+            db_path.display()
+        ));
+    }
+    let store = Store::open(&db_path).map_err(|e| anyhow!("{e}"))?;
+    let media_id = match store.get_media_by_path(&key).map_err(|e| anyhow!("{e}"))? {
+        Some(m) => Some(m.id),
+        None => {
+            // 文件被挪过位置时，退而求其次按文件名匹配
+            let name = path.file_name().map(|n| n.to_string_lossy().to_string());
+            let all = store.list_media().map_err(|e| anyhow!("{e}"))?;
+            all.into_iter()
+                .filter(|m| name.as_deref().is_some_and(|n| m.filename == n))
+                .max_by_key(|m| m.id)
+                .map(|m| m.id)
+        }
+    };
+    let media_id = media_id.ok_or_else(|| {
+        anyhow!(
+            "本地库还没有 {}：先在 GUI 里打开一次（会自动入库）",
+            path.display()
+        )
+    })?;
+    let chapters = store.load_chapters(media_id).map_err(|e| anyhow!("{e}"))?;
+
+    println!("==== 本地库章节树: {} ====", path.display());
+    println!("  库文件: {}", db_path.display());
+    if chapters.is_empty() {
+        println!("  尚无章节（需要先跑 ① 切分，或导入同名 .limed）");
+        return Ok(());
+    }
+    print_chapter_tree(&chapters, usize::MAX);
+    Ok(())
+}
+
 /// 预先完成切分和转译，并压缩保存为 .limed 缓存文件。
 pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
     let path = Path::new(file);
@@ -549,7 +615,7 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         generator: format!("limelisten {}", env!("CARGO_PKG_VERSION")),
     };
 
-    let limed = LimedFile::new(meta, core.chapters, sentences);
+    let limed = LimedFile::new(meta, lime_core::normalize_chapters(&core.chapters), sentences);
     let out_path = path.with_extension("limed");
     limed.save(&out_path)?;
 
@@ -571,6 +637,8 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
         return Err(anyhow!("文件不存在: {file}"));
     }
     let limed = LimedFile::load(path)?;
+    // 外部工具生成的缓存也可能顺序错乱：打印前先规范化，保证两级层次正确
+    let chapters = lime_core::normalize_chapters(&limed.chapters);
     println!("==== LIMED 缓存信息: {} ====", path.display());
     println!("  关联音频: {}", limed.meta.audio_filename);
     println!(
@@ -584,20 +652,8 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
     );
     println!("  原文件大小: {} 字节", limed.meta.file_size);
     println!("  生成工具: {}", limed.meta.generator);
-    println!("\n[章节结构] 共 {} 节:", limed.chapters.len());
-    for c in limed.chapters.iter().take(15) {
-        let indent = if c.level == ChapterLevel::Material { "" } else { "    " };
-        println!(
-            "  {indent}{:<12} {:>9} – {:>9}  conf={:.2}",
-            c.title,
-            fmt_ms(c.start_ms),
-            fmt_ms(c.end_ms),
-            c.confidence
-        );
-    }
-    if limed.chapters.len() > 15 {
-        println!("  ... 以及其他 {} 个章节", limed.chapters.len() - 15);
-    }
+    println!("\n[章节结构] 共 {} 节:", chapters.len());
+    print_chapter_tree(&chapters, 15);
     println!("\n[字幕预览] 共 {} 句:", limed.sentences.len());
     for s in limed.sentences.iter().take(8) {
         println!("  [{:>9} – {:>9}] {}", fmt_ms(s.start_ms), fmt_ms(s.end_ms), s.text);

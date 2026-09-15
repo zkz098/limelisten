@@ -5,6 +5,8 @@
 //!   limelisten --assert   <音频>...           P0 自动断言（exit 0 = 全绿）
 //!   limelisten --transcribe <音频> [句数]     只跑 ASR 链路并打印吸附前后对比
 //!   limelisten --playtest <音频>              播放引擎自测（真实开卡）
+//!   limelisten --chapters <音频>              打印本地库里的两级章节树（核对章节顺序）
+//!   limelisten <音频>                         直接打开该文件启动界面
 //!   limelisten --tools                        打印 whisper/模型定位结果
 //!
 //! 默认（无参数）：启动 Slint 图形界面。
@@ -45,6 +47,10 @@ fn main() -> anyhow::Result<()> {
             let f = args.get(1).expect("用法: limelisten --show-limed <limed文件>");
             cli::cmd_show_limed(f)
         }
+        Some("--chapters") => {
+            let f = args.get(1).expect("用法: limelisten --chapters <音频>");
+            cli::cmd_chapters(f)
+        }
         Some("--benchmark") | Some("--bench") => {
             let sample = args.get(1).map(|s| s.as_str());
             cli::cmd_benchmark(sample)
@@ -57,6 +63,10 @@ fn main() -> anyhow::Result<()> {
             println!("{}", gui::tool_info());
             Ok(())
         }
+        // limelisten <音频|limed>：直接带着文件启动（也方便系统“打开方式”）
+        Some(p) if !p.starts_with("--") && Path::new(p).is_file() => {
+            gui::run_with(Some(std::path::PathBuf::from(p)))
+        }
         Some("--help") | Some("-h") => {
             println!(
                 "limelisten — 听力播放器\n\n\
@@ -66,9 +76,11 @@ fn main() -> anyhow::Result<()> {
                  --transcribe <音频> [句数]  只跑 ASR 链路\n\
                  --limed <音频>              预切分与转译并打包为同名 .limed 缓存\n\
                  --show-limed <limed文件>    查看 .limed 缓存内容\n\
+                 --chapters <音频>           打印本地库两级章节树（核对章节顺序）\n\
                  --bench [音频]              Whisper 转写性能测速 (3:1 标准与防卡死熔断)\n\
                  --playtest <音频>           播放引擎自测\n\
-                 --tools                     打印 whisper/模型定位"
+                 --tools                     打印 whisper/模型定位\n\
+                 <音频|limed>               直接启动界面并载入该文件"
             );
             Ok(())
         }

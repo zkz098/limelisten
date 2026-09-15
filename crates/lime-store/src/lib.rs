@@ -1,10 +1,11 @@
 //! 库与缓存：SQLite（库/进度/分析缓存/生词本）。schema 见 docs/PLAN.md §5。
 
-use lime_core::{Chapter, ChapterLevel, ChapterSource, Error, Media, Result, Sentence, Word};
+use lime_core::{normalize_chapters, Chapter, ChapterLevel, ChapterSource, Error, Media, Result, Sentence, Word};
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MediaItem {
@@ -54,7 +55,7 @@ impl Store {
                     id INTEGER PRIMARY KEY, media_id INTEGER REFERENCES media(id) ON DELETE CASCADE,
                     level INTEGER NOT NULL, parent_id INTEGER, ordinal INTEGER,
                     start_ms INTEGER, end_ms INTEGER, title TEXT, source TEXT,
-                    confidence REAL, locked INTEGER DEFAULT 0);
+                    confidence REAL, locked INTEGER DEFAULT 0, seq INTEGER);
                 CREATE INDEX IF NOT EXISTS idx_chapter_media ON chapter(media_id, start_ms);
                 CREATE TABLE IF NOT EXISTS sentence(
                     id INTEGER PRIMARY KEY,
@@ -88,6 +89,7 @@ impl Store {
                 "#,
             )
             .map_err(|e| Error::Store(e.to_string()))?;
+        self.migrate_chapter_seq()?;
         self.conn
             .execute(
                 "INSERT INTO setting(k,v) VALUES('schema_version', ?1)
@@ -96,6 +98,44 @@ impl Store {
             )
             .map_err(|e| Error::Store(e.to_string()))?;
         Ok(())
+    }
+
+    /// V2 → V3 迁移：章节表增加 `seq`（规范顺序）。
+    ///
+    /// 老库当初就是按「材料 → 其题」顺序逐条 INSERT 的，所以 rowid 顺序就是正确顺序，
+    /// 直接按 rowid 回填即可让 `ORDER BY seq` 与旧的内存顺序完全一致——
+    /// 这正是「左侧题目 UI 错乱」的根因（旧代码按 `ordinal` 排序，把材料全挤到前面、
+    /// 把所有材料的第 1 题排在一起）。
+    fn migrate_chapter_seq(&self) -> Result<()> {
+        if !self.has_column("chapter", "seq")? {
+            self.conn
+                .execute_batch(
+                    "ALTER TABLE chapter ADD COLUMN seq INTEGER;
+                     UPDATE chapter SET seq = (
+                         SELECT COUNT(*) FROM chapter c2
+                         WHERE c2.media_id = chapter.media_id AND c2.id < chapter.id);",
+                )
+                .map_err(|e| Error::Store(e.to_string()))?;
+        }
+        self.conn
+            .execute_batch("CREATE INDEX IF NOT EXISTS idx_chapter_media_seq ON chapter(media_id, seq);")
+            .map_err(|e| Error::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    fn has_column(&self, table: &str, column: &str) -> Result<bool> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .map_err(|e| Error::Store(e.to_string()))?;
+        let mut rows = stmt.query([]).map_err(|e| Error::Store(e.to_string()))?;
+        while let Some(row) = rows.next().map_err(|e| Error::Store(e.to_string()))? {
+            let name: String = row.get(1).map_err(|e| Error::Store(e.to_string()))?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// 新增或更新媒体，返回 media_id。
@@ -185,83 +225,172 @@ impl Store {
             .map_err(|e| Error::Store(e.to_string()))
     }
 
+    /// 全量替换（AI 切分结果 / `.limed` 缓存导入）。
+    ///
+    /// 约定：`chapters` 必须是「材料 → 其题」的规范顺序（`seq` = 下标，见
+    /// `lime_core::normalize_chapters`）。写库时顺序、父下标、序号全按它落盘，
+    /// 保证内存列表与库里读出来的顺序严格一致——题级微调用 `seq` 定位才不会打偏。
+    ///
+    /// 人工锁定（`locked=1`）的章节**保留人工修正的时间**，但会被放到本次分析的
+    /// 规范位置（只更新 `seq`/`parent_id`），这样既不会丢人工修正，也不会留下
+    /// 重复/错位的行；匹配不上的人工章节按原顺序追加到末尾。
     pub fn replace_chapters(&self, media_id: i64, chapters: &[Chapter]) -> Result<()> {
-        self.conn
-            .execute("DELETE FROM chapter WHERE media_id=?1 AND locked=0", params![media_id])
+        self.write_chapters(media_id, chapters, false)
+    }
+
+    /// 全量覆盖（含人工锁定行）：拆分/合并等人工作业后的权威列表。
+    pub fn overwrite_chapters(&self, media_id: i64, chapters: &[Chapter]) -> Result<()> {
+        self.write_chapters(media_id, chapters, true)
+    }
+
+    fn write_chapters(&self, media_id: i64, chapters: &[Chapter], force: bool) -> Result<()> {
+        let chapters = normalize_chapters(chapters);
+        let tx = self
+            .conn
+            .unchecked_transaction()
             .map_err(|e| Error::Store(e.to_string()))?;
-        for c in chapters {
-            let locked_exists: i64 = self
-                .conn
-                .query_row(
-                    "SELECT COUNT(*) FROM chapter WHERE media_id=?1 AND ordinal=?2 AND locked=1",
-                    params![media_id, c.ordinal as i64],
-                    |r| r.get(0),
+        if force {
+            tx.execute("DELETE FROM chapter WHERE media_id=?1", params![media_id])
+                .map_err(|e| Error::Store(e.to_string()))?;
+        } else {
+            tx.execute("DELETE FROM chapter WHERE media_id=?1 AND locked=0", params![media_id])
+                .map_err(|e| Error::Store(e.to_string()))?;
+        }
+
+        // 仍需保留的人工修正：按 (level, 父下标, 同级序号) 认领本次分析里的同名章节
+        let mut kept: Vec<(i64, i64, i64, i64)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, level, COALESCE(parent_id, 0), COALESCE(ordinal, 0)
+                     FROM chapter WHERE media_id=?1 AND locked=1 ORDER BY id",
                 )
-                .unwrap_or(0);
-            if locked_exists > 0 {
+                .map_err(|e| Error::Store(e.to_string()))?;
+            let rows = stmt
+                .query_map(params![media_id], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?))
+                })
+                .map_err(|e| Error::Store(e.to_string()))?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()
+                .map_err(|e| Error::Store(e.to_string()))?
+        };
+
+        for (i, c) in chapters.iter().enumerate() {
+            let seq = i as i64;
+            let level = if c.is_material() { 0i64 } else { 1i64 };
+            let parent = c.parent.map(|p| p as i64 + 1).unwrap_or(0);
+            let parent_val: Option<i64> = if parent > 0 { Some(parent) } else { None };
+
+            let claim = kept.iter().position(|k| k.1 == level && k.2 == parent && k.3 == c.ordinal as i64);
+            if let Some(pos) = claim {
+                let id = kept.remove(pos).0;
+                tx.execute(
+                    "UPDATE chapter SET seq=?1, parent_id=?2 WHERE id=?3",
+                    params![seq, parent_val, id],
+                )
+                .map_err(|e| Error::Store(e.to_string()))?;
                 continue;
             }
 
-            let (level, parent_id) = match c.level {
-                ChapterLevel::Material => (0i64, None),
-                ChapterLevel::Question => (1i64, c.parent.map(|p| p as i64 + 1)),
-            };
             let source = match c.source {
                 ChapterSource::Structure => "struct",
                 ChapterSource::Asr => "asr",
                 ChapterSource::Manual => "manual",
             };
-            self.conn
-                .execute(
-                    "INSERT INTO chapter(media_id,level,parent_id,ordinal,start_ms,end_ms,title,source,confidence,locked)
-                     VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                    params![
-                        media_id,
-                        level,
-                        parent_id,
-                        c.ordinal as i64,
-                        c.start_ms as i64,
-                        c.end_ms as i64,
-                        c.title,
-                        source,
-                        c.confidence as f64,
-                        c.locked as i64
-                    ],
-                )
-                .map_err(|e| Error::Store(e.to_string()))?;
+            tx.execute(
+                "INSERT INTO chapter(media_id,level,parent_id,ordinal,start_ms,end_ms,title,source,confidence,locked,seq)
+                 VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
+                params![
+                    media_id,
+                    level,
+                    parent_val,
+                    c.ordinal as i64,
+                    c.start_ms as i64,
+                    c.end_ms as i64,
+                    c.title,
+                    source,
+                    c.confidence as f64,
+                    c.locked as i64,
+                    seq
+                ],
+            )
+            .map_err(|e| Error::Store(e.to_string()))?;
         }
+
+        // 无法归位的人工章节：追加到末尾，保持 `seq` 唯一且顺序稳定
+        let tail = chapters.len() as i64;
+        for (k, item) in kept.iter().enumerate() {
+            tx.execute(
+                "UPDATE chapter SET seq=?1 WHERE id=?2",
+                params![tail + k as i64, item.0],
+            )
+            .map_err(|e| Error::Store(e.to_string()))?;
+        }
+
+        tx.commit().map_err(|e| Error::Store(e.to_string()))?;
         Ok(())
     }
 
+    /// 读取章节列表，**保证「材料 → 其题」规范顺序**：
+    /// 按 `seq` 排序（没写 seq 的老行退回 rowid），把 `parent_id`（规范下标 + 1）
+    /// 重新映射成实际下标，最后过一遍 `normalize_chapters` 兜底。
     pub fn load_chapters(&self, media_id: i64) -> Result<Vec<Chapter>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT level,parent_id,ordinal,start_ms,end_ms,title,source,confidence,locked
-                      FROM chapter WHERE media_id=?1 ORDER BY ordinal, start_ms")
+            .prepare(
+                "SELECT level,parent_id,ordinal,start_ms,end_ms,title,source,confidence,locked,seq,id
+                 FROM chapter WHERE media_id=?1
+                 ORDER BY (seq IS NULL), seq, id",
+            )
             .map_err(|e| Error::Store(e.to_string()))?;
-        let rows = stmt
+
+        #[allow(clippy::type_complexity)]
+        let mut raw: Vec<(Chapter, Option<u32>, i64)> = stmt
             .query_map(params![media_id], |r| {
                 let level: i64 = r.get(0)?;
                 let parent: Option<i64> = r.get(1)?;
-                Ok(Chapter {
-                    level: if level == 0 { ChapterLevel::Material } else { ChapterLevel::Question },
-                    parent: parent.map(|p| (p - 1).max(0) as usize),
-                    ordinal: r.get::<_, i64>(2)? as u32,
-                    start_ms: r.get::<_, i64>(3)? as u64,
-                    end_ms: r.get::<_, i64>(4)? as u64,
-                    title: r.get(5)?,
-                    source: match r.get::<_, String>(6)?.as_str() {
-                        "asr" => ChapterSource::Asr,
-                        "manual" => ChapterSource::Manual,
-                        _ => ChapterSource::Structure,
+                let seq: Option<i64> = r.get(9)?;
+                Ok((
+                    Chapter {
+                        seq: seq.unwrap_or(0).max(0) as u32,
+                        level: if level == 0 { ChapterLevel::Material } else { ChapterLevel::Question },
+                        parent: parent.map(|p| (p - 1).max(0) as usize),
+                        ordinal: r.get::<_, i64>(2)? as u32,
+                        start_ms: r.get::<_, i64>(3)? as u64,
+                        end_ms: r.get::<_, i64>(4)? as u64,
+                        title: r.get(5)?,
+                        source: match r.get::<_, String>(6)?.as_str() {
+                            "asr" => ChapterSource::Asr,
+                            "manual" => ChapterSource::Manual,
+                            _ => ChapterSource::Structure,
+                        },
+                        confidence: r.get::<_, f64>(7)? as f32,
+                        locked: r.get::<_, i64>(8)? != 0,
                     },
-                    confidence: r.get::<_, f64>(7)? as f32,
-                    locked: r.get::<_, i64>(8)? != 0,
-                })
+                    seq.map(|s| s.max(0) as u32),
+                    r.get(10)?,
+                ))
             })
+            .map_err(|e| Error::Store(e.to_string()))?
+            .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Store(e.to_string()))?;
-        rows.collect::<std::result::Result<Vec<_>, _>>()
-            .map_err(|e| Error::Store(e.to_string()))
+
+        // 老库没回填到 seq（异常情形）：退回 rowid（当初的插入顺序）
+        if raw.iter().any(|(_, seq, _)| seq.is_none()) {
+            raw.sort_by_key(|(_, _, id)| *id);
+        }
+
+        let mut index_of: HashMap<u32, usize> = HashMap::new();
+        for (i, (_, seq, _)) in raw.iter().enumerate() {
+            index_of.entry(seq.unwrap_or(i as u32)).or_insert(i);
+        }
+
+        let mut out: Vec<Chapter> = Vec::with_capacity(raw.len());
+        for (i, (mut c, seq, _)) in raw.into_iter().enumerate() {
+            c.seq = seq.unwrap_or(i as u32);
+            c.parent = c.parent.and_then(|p| index_of.get(&(p as u32)).copied());
+            out.push(c);
+        }
+        Ok(normalize_chapters(&out))
     }
 
     pub fn save_sentences(&self, media_id: i64, sentences: &[Sentence]) -> Result<()> {
@@ -414,95 +543,88 @@ impl Store {
         }
     }
 
+    /// 题级微调。按规范顺序 `seq` 定位：`ordinal` 在材料与题之间会撞号
+    /// （每份材料的第 1 题都是 1），拿它当主键会一次改到别的材料的题。
     pub fn update_chapter_range(
         &self,
         media_id: i64,
-        ordinal: u32,
+        seq: u32,
         start_ms: u64,
         end_ms: u64,
     ) -> Result<()> {
         self.conn
             .execute(
                 "UPDATE chapter SET start_ms=?1, end_ms=?2, source='manual', locked=1
-                 WHERE media_id=?3 AND ordinal=?4",
-                params![start_ms as i64, end_ms as i64, media_id, ordinal as i64],
+                 WHERE media_id=?3 AND seq=?4",
+                params![start_ms as i64, end_ms as i64, media_id, seq as i64],
             )
             .map_err(|e| Error::Store(e.to_string()))?;
         Ok(())
     }
 
-    pub fn split_chapter(&self, media_id: i64, ordinal: u32, split_ms: u64) -> Result<()> {
+    /// 在 `split_ms` 处把第 `seq` 章拆成两段（人工锁定，重跑分析不覆盖）。
+    /// 返回是否真的拆开了（光标不在章节内部时不动）。
+    pub fn split_chapter(&self, media_id: i64, seq: u32, split_ms: u64) -> Result<bool> {
         let chapters = self.load_chapters(media_id)?;
-        let Some((idx, cur)) = chapters.iter().enumerate().find(|(_, c)| c.ordinal == ordinal) else {
-            return Ok(());
+        let Some(idx) = chapters.iter().position(|c| c.seq == seq) else {
+            return Ok(false);
         };
+        let cur = chapters[idx].clone();
         if split_ms <= cur.start_ms || split_ms >= cur.end_ms {
-            return Ok(());
+            return Ok(false);
         }
 
-        let mut updated = Vec::new();
-        for (i, c) in chapters.iter().enumerate() {
-            if i < idx {
-                updated.push(c.clone());
-            } else if i == idx {
-                let mut first = c.clone();
-                first.end_ms = split_ms;
-                first.source = ChapterSource::Manual;
-                first.locked = true;
-                updated.push(first);
+        let mut updated: Vec<Chapter> = chapters[..idx].to_vec();
+        let mut first = cur.clone();
+        first.end_ms = split_ms;
+        first.source = ChapterSource::Manual;
+        first.locked = true;
+        updated.push(first);
+        let mut second = cur;
+        second.start_ms = split_ms;
+        second.source = ChapterSource::Manual;
+        second.locked = true;
+        updated.push(second);
+        updated.extend_from_slice(&chapters[idx + 1..]);
 
-                let mut second = c.clone();
-                second.start_ms = split_ms;
-                second.title = format!("{} (2)", c.title);
-                second.ordinal = c.ordinal + 1;
-                second.source = ChapterSource::Manual;
-                second.locked = true;
-                updated.push(second);
-            } else {
-                let mut shifted = c.clone();
-                shifted.ordinal += 1;
-                updated.push(shifted);
-            }
-        }
-        self.conn
-            .execute("DELETE FROM chapter WHERE media_id=?1", params![media_id])
-            .map_err(|e| Error::Store(e.to_string()))?;
-        self.replace_chapters(media_id, &updated)?;
-        Ok(())
+        // 重排规范顺序：seq 连续、题号重算、后半段仍归属同一材料
+        let normalized = normalize_chapters(&updated);
+        self.overwrite_chapters(media_id, &normalized)?;
+        Ok(true)
     }
 
-    pub fn merge_next_chapter(&self, media_id: i64, ordinal: u32) -> Result<()> {
+    /// 把第 `seq` 章与**下一个同级兄弟**合并（题并题、材料并材料）。
+    /// 返回是否真的合并了：不改跨材料吞并（最后一题不会吃掉下一份材料）。
+    pub fn merge_next_chapter(&self, media_id: i64, seq: u32) -> Result<bool> {
         let chapters = self.load_chapters(media_id)?;
-        let Some((idx, cur)) = chapters.iter().enumerate().find(|(_, c)| c.ordinal == ordinal) else {
-            return Ok(());
+        let Some(idx) = chapters.iter().position(|c| c.seq == seq) else {
+            return Ok(false);
         };
+        let cur = &chapters[idx];
         let Some(next) = chapters.get(idx + 1) else {
-            return Ok(());
+            return Ok(false);
         };
-
-        let mut updated = Vec::new();
-        for (i, c) in chapters.iter().enumerate() {
-            if i < idx {
-                updated.push(c.clone());
-            } else if i == idx {
-                let mut merged = cur.clone();
-                merged.end_ms = next.end_ms;
-                merged.source = ChapterSource::Manual;
-                merged.locked = true;
-                updated.push(merged);
-            } else if i == idx + 1 {
-                // skip next
-            } else {
-                let mut shifted = c.clone();
-                shifted.ordinal = shifted.ordinal.saturating_sub(1);
-                updated.push(shifted);
-            }
+        if next.level != cur.level || next.parent != cur.parent {
+            return Ok(false);
         }
-        self.conn
-            .execute("DELETE FROM chapter WHERE media_id=?1", params![media_id])
-            .map_err(|e| Error::Store(e.to_string()))?;
-        self.replace_chapters(media_id, &updated)?;
-        Ok(())
+
+        let mut updated: Vec<Chapter> = Vec::with_capacity(chapters.len() - 1);
+        for (i, c) in chapters.iter().enumerate() {
+            if i == idx + 1 {
+                continue;
+            }
+            let mut c = c.clone();
+            if i == idx {
+                c.end_ms = next.end_ms;
+                c.source = ChapterSource::Manual;
+                c.locked = true;
+            }
+            updated.push(c);
+        }
+
+        let normalized = normalize_chapters(&updated);
+        self.overwrite_chapters(media_id, &normalized)?;
+        Ok(true)
     }
 
     pub fn bump_stat(&self, media_id: i64, chapter_id: i64, loops: bool) -> Result<()> {
@@ -531,39 +653,67 @@ fn now_ms() -> i64 {
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_store_crud() {
+    fn mat(seq: u32, ordinal: u32, start: u64, end: u64, title: &str) -> Chapter {
+        Chapter {
+            seq,
+            level: ChapterLevel::Material,
+            parent: None,
+            ordinal,
+            start_ms: start,
+            end_ms: end,
+            title: title.into(),
+            source: ChapterSource::Structure,
+            confidence: 0.95,
+            locked: false,
+        }
+    }
+
+    fn question(seq: u32, ordinal: u32, parent: Option<usize>, start: u64, end: u64) -> Chapter {
+        Chapter {
+            seq,
+            level: ChapterLevel::Question,
+            parent,
+            ordinal,
+            start_ms: start,
+            end_ms: end,
+            title: format!("第 {ordinal} 题"),
+            source: ChapterSource::Structure,
+            confidence: 0.9,
+            locked: false,
+        }
+    }
+
+    fn titles(chapters: &[Chapter]) -> Vec<String> {
+        chapters.iter().map(|c| c.title.clone()).collect()
+    }
+
+    /// 两份材料、每份两道题（题号会重复），这是真实素材的典型形状。
+    fn two_materials() -> Vec<Chapter> {
+        vec![
+            mat(0, 1, 0, 60_000, "材料 1"),
+            question(1, 1, Some(0), 0, 20_000),
+            question(2, 2, Some(0), 20_000, 60_000),
+            mat(3, 2, 70_000, 130_000, "材料 2"),
+            question(4, 1, Some(3), 70_000, 90_000),
+            question(5, 2, Some(3), 90_000, 130_000),
+        ]
+    }
+
+    fn open_with_media() -> (Store, i64) {
         let s = Store::open_in_memory().unwrap();
         let mid = s.upsert_media("test.mp3", 1000, 2000, 60_000, 44100, 2).unwrap();
+        (s, mid)
+    }
+
+    #[test]
+    fn test_store_crud() {
+        let (s, mid) = open_with_media();
         assert!(mid > 0);
 
-        let ch = vec![
-            Chapter {
-                level: ChapterLevel::Material,
-                parent: None,
-                ordinal: 1,
-                start_ms: 1000,
-                end_ms: 20_000,
-                title: "Text 1".into(),
-                source: ChapterSource::Structure,
-                confidence: 0.95,
-                locked: false,
-            },
-            Chapter {
-                level: ChapterLevel::Question,
-                parent: Some(0),
-                ordinal: 2,
-                start_ms: 2000,
-                end_ms: 8_000,
-                title: "Question 1".into(),
-                source: ChapterSource::Structure,
-                confidence: 0.9,
-                locked: false,
-            },
-        ];
+        let ch = two_materials();
         s.replace_chapters(mid, &ch).unwrap();
         let loaded_ch = s.load_chapters(mid).unwrap();
-        assert_eq!(loaded_ch.len(), 2);
+        assert_eq!(loaded_ch.len(), 6);
 
         // Sentences & words
         let sents = vec![
@@ -588,17 +738,154 @@ mod tests {
         s.save_progress(mid, 3500, 1).unwrap();
         let prog = s.get_progress(mid).unwrap();
         assert_eq!(prog, Some((3500, 1)));
+    }
 
-        // Split & Merge
-        s.split_chapter(mid, 1, 10_000).unwrap();
-        let ch_split = s.load_chapters(mid).unwrap();
-        assert_eq!(ch_split.len(), 3);
-        assert_eq!(ch_split[0].end_ms, 10_000);
-        assert_eq!(ch_split[1].start_ms, 10_000);
+    /// 回归：左侧题目 UI 错乱的根因 —— 老代码 `ORDER BY ordinal, start_ms`
+    /// 会把材料全挤到前面、把所有材料的「第 1 题」排在一起。
+    #[test]
+    fn chapters_keep_material_question_order() {
+        let (s, mid) = open_with_media();
+        s.replace_chapters(mid, &two_materials()).unwrap();
 
-        s.merge_next_chapter(mid, 1).unwrap();
-        let ch_merged = s.load_chapters(mid).unwrap();
-        assert_eq!(ch_merged.len(), 2);
-        assert_eq!(ch_merged[0].end_ms, 20_000);
+        let loaded = s.load_chapters(mid).unwrap();
+        assert_eq!(
+            titles(&loaded),
+            vec!["材料 1", "第 1 题", "第 2 题", "材料 2", "第 1 题", "第 2 题"]
+        );
+        assert!(lime_core::chapters_are_canonical(&loaded));
+        assert_eq!(loaded[1].parent, Some(0));
+        assert_eq!(loaded[4].parent, Some(3));
+
+        // 重新读一次（进程重启）：顺序、题号、父章节都不变
+        let again = s.load_chapters(mid).unwrap();
+        assert_eq!(again, loaded);
+    }
+
+    /// 老库（V2，没有 `seq`、行顺序是错乱的）打开时自动迁移归位。
+    #[test]
+    fn legacy_schema_is_migrated_and_regrouped() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE media(id INTEGER PRIMARY KEY, path TEXT UNIQUE NOT NULL, size INTEGER, mtime INTEGER,
+                 duration_ms INTEGER, sample_rate INTEGER, channels INTEGER, added_at INTEGER);
+             CREATE TABLE chapter(id INTEGER PRIMARY KEY, media_id INTEGER, level INTEGER NOT NULL, parent_id INTEGER,
+                 ordinal INTEGER, start_ms INTEGER, end_ms INTEGER, title TEXT, source TEXT, confidence REAL,
+                 locked INTEGER DEFAULT 0);
+             INSERT INTO media(id,path,duration_ms) VALUES(1,'legacy.mp3',130000);",
+        )
+        .unwrap();
+
+        // 老数据插入顺序 = 「材料全在前 + 全部第 1 题 + 全部第 2 题」，父下标 = 规范下标 + 1
+        let rows: [(i64, i64, Option<i64>, i64, i64, &str); 6] = [
+            (0, 0, None, 0, 60_000, "材料 1（叮咚）"),
+            (0, 0, None, 70_000, 130_000, "材料 2（叮咚）"),
+            (1, 1, Some(1), 0, 20_000, "第 1 题"),
+            (1, 1, Some(2), 70_000, 90_000, "第 1 题"),
+            (1, 2, Some(1), 20_000, 60_000, "第 2 题"),
+            (1, 2, Some(2), 90_000, 130_000, "第 2 题"),
+        ];
+        for (level, ordinal, parent, start, end, title) in rows {
+            conn.execute(
+                "INSERT INTO chapter(media_id,level,parent_id,ordinal,start_ms,end_ms,title,source,confidence,locked)
+                 VALUES(1,?1,?2,?3,?4,?5,?6,'struct',0.8,0)",
+                params![level, parent, ordinal, start, end, title],
+            )
+            .unwrap();
+        }
+
+        let s = Store { conn };
+        s.migrate().unwrap();
+        let loaded = s.load_chapters(1).unwrap();
+        assert_eq!(
+            titles(&loaded),
+            vec!["材料 1", "第 1 题", "第 2 题", "材料 2", "第 1 题", "第 2 题"]
+        );
+        assert!(lime_core::chapters_are_canonical(&loaded));
+        assert_eq!(loaded[4].parent, Some(3));
+        assert_eq!(loaded[4].start_ms, 70_000);
+    }
+
+    /// 题级微调按 `seq` 定位：媒体里有多个「第 1 题」时只能改中目标那一行。
+    #[test]
+    fn update_range_targets_single_chapter() {
+        let (s, mid) = open_with_media();
+        s.replace_chapters(mid, &two_materials()).unwrap();
+
+        s.update_chapter_range(mid, 4, 69_000, 92_000).unwrap();
+        let loaded = s.load_chapters(mid).unwrap();
+        assert_eq!(loaded[4].start_ms, 69_000);
+        assert_eq!(loaded[4].end_ms, 92_000);
+        assert!(loaded[4].locked);
+        assert_eq!(loaded[4].source, ChapterSource::Manual);
+
+        // 另一份材料的「第 1 题」不受影响
+        assert_eq!(loaded[1].start_ms, 0);
+        assert_eq!(loaded[1].end_ms, 20_000);
+        assert!(!loaded[1].locked);
+    }
+
+    /// 人工锁定后重跑分析：人工边界保留，其余跟随新结果，且不会出现重复/丢失。
+    #[test]
+    fn locked_chapter_survives_reanalysis() {
+        let (s, mid) = open_with_media();
+        let list = two_materials();
+        s.replace_chapters(mid, &list).unwrap();
+        s.update_chapter_range(mid, 4, 66_000, 92_000).unwrap();
+
+        let mut reanalyzed = list.clone();
+        reanalyzed[4].start_ms = 70_500;
+        reanalyzed[4].end_ms = 90_500;
+        reanalyzed[5].start_ms = 90_500;
+        s.replace_chapters(mid, &reanalyzed).unwrap();
+
+        let loaded = s.load_chapters(mid).unwrap();
+        assert_eq!(loaded.len(), 6);
+        assert_eq!(loaded[4].start_ms, 66_000, "人工修正必须保留");
+        assert_eq!(loaded[4].end_ms, 92_000);
+        assert_eq!(loaded[5].start_ms, 90_500, "其余章节跟随新分析");
+        assert!(loaded[4].locked);
+        assert!(lime_core::chapters_are_canonical(&loaded));
+    }
+
+    /// 拆分与合并：只在同一份材料内部动手，不会串到下一份材料。
+    #[test]
+    fn split_and_merge_stay_inside_material() {
+        let (s, mid) = open_with_media();
+        s.replace_chapters(mid, &two_materials()).unwrap();
+
+        // 材料 1 的第 1 题（seq = 1）在 8s 处拆成两题
+        assert!(s.split_chapter(mid, 1, 8_000).unwrap());
+        let loaded = s.load_chapters(mid).unwrap();
+        assert_eq!(
+            titles(&loaded),
+            vec![
+                "材料 1",
+                "第 1 题",
+                "第 2 题",
+                "第 3 题",
+                "材料 2",
+                "第 1 题",
+                "第 2 题"
+            ]
+        );
+        assert_eq!(loaded[1].end_ms, 8_000);
+        assert_eq!(loaded[2].start_ms, 8_000);
+        assert_eq!(loaded[2].parent, Some(0));
+        assert!(loaded[1].locked && loaded[2].locked);
+        assert!(lime_core::chapters_are_canonical(&loaded));
+
+        // 同级兄弟再合回来
+        assert!(s.merge_next_chapter(mid, 1).unwrap());
+        let merged = s.load_chapters(mid).unwrap();
+        assert_eq!(merged.len(), 6);
+        assert_eq!(merged[1].start_ms, 0);
+        assert_eq!(merged[1].end_ms, 20_000);
+        assert!(merged[1].locked);
+
+        // 材料 1 的最后一题没有同级下一题 → 不吃掉下一份材料
+        assert!(!s.merge_next_chapter(mid, 2).unwrap());
+        // 光标不在章节范围内 → 拆分不动
+        assert!(!s.split_chapter(mid, 2, 61_000).unwrap());
+        assert_eq!(s.load_chapters(mid).unwrap().len(), 6);
     }
 }

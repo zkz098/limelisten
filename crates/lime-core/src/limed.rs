@@ -217,6 +217,7 @@ mod tests {
 
         let chapters = vec![
             Chapter {
+                seq: 0,
                 level: ChapterLevel::Material,
                 parent: None,
                 ordinal: 1,
@@ -228,6 +229,7 @@ mod tests {
                 locked: false,
             },
             Chapter {
+                seq: 1,
                 level: ChapterLevel::Question,
                 parent: Some(0),
                 ordinal: 1,
@@ -300,5 +302,25 @@ mod tests {
         assert!(sample.matches_audio(60_800, Some(1_000_000)));
         // 超出容差 (差 2000ms)
         assert!(!sample.matches_audio(62_000, Some(1_000_000)));
+    }
+
+    /// 老缓存没有 `seq` 字段：serde 会填 0，读取后交给 `normalize_chapters` 补序归位。
+    #[test]
+    fn test_legacy_limed_without_seq_still_loads() {
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&make_sample_limed()).unwrap()).unwrap();
+        for c in json["chapters"].as_array_mut().unwrap() {
+            c.as_object_mut().unwrap().remove("seq");
+        }
+
+        let decoded: LimedFile = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.chapters.len(), 2);
+        assert_eq!(decoded.chapters[0].seq, 0);
+        assert_eq!(decoded.chapters[1].seq, 0);
+
+        let fixed = crate::normalize_chapters(&decoded.chapters);
+        assert!(crate::chapters_are_canonical(&fixed));
+        assert_eq!(fixed[1].seq, 1);
+        assert_eq!(fixed[1].parent, Some(0));
     }
 }

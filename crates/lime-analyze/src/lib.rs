@@ -6,7 +6,7 @@
 //!   与静音结构互相独立、互相印证 —— 两者一致时置信度最高；
 //! - 纯"嘀声"式持续音调检测被实测否决（单文件误报 475–758 个），故不采用。
 
-use lime_core::{Chapter, ChapterLevel, ChapterSource};
+use lime_core::{normalize_chapters, Chapter, ChapterLevel, ChapterSource};
 
 pub mod chime;
 pub mod snap;
@@ -55,6 +55,13 @@ pub enum GapKind {
     /// 材料边界（答题间隔；实测 5.4–20 s）
     Material,
 }
+
+/// 题级分段的最小长度（毫秒）：短于此值的"题"并进上一题。
+///
+/// 依据：数字静音在材料末尾残留几毫秒时，`GapKind::Question` 会贴出一个几乎重合的
+/// 边界，旧实现会切出 `00:12.7 – 00:12.7` 这种 0–40 ms 的空题（实测 `训练1`/`训练2`
+/// 各命中一处），在左侧导航里表现为"点了没反应的题"。
+pub const MIN_QUESTION_MS: u64 = 400;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gap {
@@ -344,16 +351,13 @@ pub fn build_chapters(
             .filter(|a| a.time_ms >= *start && a.time_ms < end + snap_ms)
             .find_map(|a| a.title_hint())
             .unwrap_or_else(|| {
-                if *from_chime {
-                    format!("材料 {}（叮咚）", m_idx + 1)
-                } else {
-                    format!("材料 {}", m_idx + 1)
-                }
+                format!("材料 {}", m_idx + 1)
             });
         out.push(Chapter {
+            seq: out.len() as u32,
             level: ChapterLevel::Material,
             parent: None,
-            ordinal: 0,
+            ordinal: m_idx as u32 + 1,
             start_ms: *start,
             end_ms: *end,
             title: mat_title,
@@ -383,11 +387,13 @@ pub fn build_chapters(
         let mut prev = *start;
         let mut ordinal = 0u32;
         for b in q_bounds {
-            if b <= prev {
+            // 退化分段不入列：并进上一题（见 `MIN_QUESTION_MS`）
+            if b <= prev + MIN_QUESTION_MS || *end <= b + MIN_QUESTION_MS {
                 continue;
             }
             ordinal += 1;
             out.push(Chapter {
+                seq: out.len() as u32,
                 level: ChapterLevel::Question,
                 parent: Some(mat_idx),
                 ordinal,
@@ -403,6 +409,7 @@ pub fn build_chapters(
         ordinal += 1;
         if *end > prev {
             out.push(Chapter {
+                seq: out.len() as u32,
                 level: ChapterLevel::Question,
                 parent: Some(mat_idx),
                 ordinal,
@@ -415,7 +422,9 @@ pub fn build_chapters(
             });
         }
     }
-    out
+
+    // 保证交出去的列表一定是「材料 → 其题」的规范顺序（幂等，见 lime-core）
+    normalize_chapters(&out)
 }
 
 #[cfg(test)]
@@ -445,6 +454,29 @@ mod tests {
     }
 
     #[test]
+    fn degenerate_question_boundary_is_merged_into_previous() {
+        // 材料 1：0–20 s，末尾 12 ms 处有一个"题边界"（数字静音残留）
+        let structure = Structure {
+            speech: vec![(0, 19_988), (30_000, 40_000)],
+            gaps: vec![
+                Gap { start_ms: 19_988, end_ms: 20_000, kind: GapKind::Question },
+                Gap { start_ms: 20_000, end_ms: 30_000, kind: GapKind::Material },
+            ],
+            duration_ms: 40_000,
+            has_digital_silence: true,
+        };
+        let chapters = build_chapters(&structure, &[], &[], &AnalyzeParams::default());
+        assert!(lime_core::chapters_are_canonical(&chapters), "{chapters:?}");
+        let questions: Vec<_> = chapters
+            .iter()
+            .filter(|c| c.level == ChapterLevel::Question && c.parent == Some(0))
+            .collect();
+        assert_eq!(questions.len(), 1, "不应出现 0–40 ms 的空题: {chapters:?}");
+        assert_eq!(questions[0].start_ms, 0);
+        assert_eq!(questions[0].end_ms, 20_000);
+    }
+
+    #[test]
     fn boundary_merge_boosts_confidence() {
         let structure = Structure {
             speech: vec![(0, 5000), (15000, 20000)],
@@ -464,10 +496,32 @@ mod tests {
         assert!(b[0].from_gap && b[0].from_chime, "{b:?}");
         assert!(b[0].confidence > 0.95);
         let chapters = build_chapters(&structure, &[], &[chime], &AnalyzeParams::default());
+        assert!(lime_core::chapters_are_canonical(&chapters), "{chapters:?}");
         let m: Vec<_> = chapters.iter().filter(|c| c.level == ChapterLevel::Material).collect();
         assert_eq!(m.len(), 2, "{chapters:?}");
         assert_eq!(m[0].start_ms, 0);
         assert_eq!(m[0].end_ms, 5000);
         assert_eq!(m[1].start_ms, 15400);
+        // 题必须紧跟自己的材料，且题号从 1 开始逐份材料重排
+        let mut mat_no = 0u32;
+        for i in chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.level == ChapterLevel::Material)
+            .map(|(i, _)| i)
+        {
+            mat_no += 1;
+            assert_eq!(chapters[i].ordinal, mat_no);
+            let mut n = 0u32;
+            for q in chapters[i + 1..]
+                .iter()
+                .take_while(|c| c.level == ChapterLevel::Question)
+            {
+                n += 1;
+                assert_eq!(q.parent, Some(i));
+                assert_eq!(q.ordinal, n);
+            }
+        }
+        assert_eq!(mat_no, 2);
     }
 }

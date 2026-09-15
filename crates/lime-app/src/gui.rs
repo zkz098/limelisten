@@ -13,8 +13,8 @@ use crate::{ChapterRow, MainWindow, MediaRow, ModelBenchmarkRow, WordCell};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use lime_audio::Engine;
 use lime_core::{
-    find_accompanying_audio, find_matching_limed, Chapter, ChapterLevel, ChapterSource, LimedFile,
-    LimedMeta, Sentence, Word,
+    find_accompanying_audio, find_matching_limed, normalize_chapters, Chapter, ChapterSource,
+    LimedFile, LimedMeta, Sentence, Word,
 };
 use lime_store::{MediaItem, Store};
 use slint::{ComponentHandle, Model, ModelRc, VecModel};
@@ -66,6 +66,8 @@ struct GuiState {
     speed: f32,
     loop_count: u32,
     auto_pause: bool,
+    /// 听力原文是否可见（关掉 = 盲听模式；会话内保持，切歌不重置）
+    show_transcript: bool,
     busy: Arc<AtomicBool>,
     media_list: Vec<MediaItem>,
     last_progress_save: std::time::Instant,
@@ -89,6 +91,7 @@ impl Default for GuiState {
             speed: 1.0,
             loop_count: 0,
             auto_pause: true,
+            show_transcript: true,
             busy: Arc::new(AtomicBool::new(false)),
             media_list: Vec::new(),
             last_progress_save: std::time::Instant::now(),
@@ -445,7 +448,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
     let summary = if let Some((name, speedup, true)) = best_model {
         format!("✅ 最佳推荐模型: {name} (倍速 {speedup:.1}x) · 性能符合 3:1 标准，推荐作为主转写模型")
     } else if let Some((_name, speedup, false)) = best_model {
-        format!("⚠️ 已测模型最高倍速仅 {speedup:.1}x (低于 3:1 标准)。建议下载 Tiny/Base 规格，或使用 Slim 纯听版直接消费 .limed 缓存。")
+        format!("⚠️ 已测模型最高倍速仅 {speedup:.1}x (低于 3:1 标准)。建议下载 Tiny/Base 规格，或直接配合 .limed 缓存使用。")
     } else {
         "未完成有效测速。请检查模型或点击「下载」轻量规格模型后重试。".to_string()
     };
@@ -456,11 +459,16 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
 #[cfg(not(feature = "whisper"))]
 fn run_gui_benchmark(tx: Sender<Msg>, _audio_path: Option<PathBuf>) {
     let _ = tx.send(Msg::BenchDone {
-        summary: "Slim 纯听版已裁剪 Whisper 引擎，无需测速，可直接打开 .limed 缓存秒开音频。".into(),
+        summary: "当前版本未包含转写引擎，无需测速，可直接打开 .limed 缓存播放音频。".into(),
     });
 }
 
 pub fn run() -> anyhow::Result<()> {
+    run_with(None)
+}
+
+/// `open`: 启动时直接加载的音频 / `.limed`（`limelisten <文件>`，便于“打开方式”与验收）。
+pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     let ui = MainWindow::new()?;
     let db_path = paths::data_dir().join("library.db");
     let store = Rc::new(RefCell::new(Store::open(&db_path)?));
@@ -474,14 +482,19 @@ pub fn run() -> anyhow::Result<()> {
 
     let is_slim = cfg!(not(feature = "whisper"));
     ui.set_is_slim(is_slim);
+    ui.set_show_transcript(state.borrow().show_transcript);
     if is_slim {
-        ui.set_app_title("limelisten — 听力播放器 (Slim 纯听版)".into());
-        ui.set_status("Slim 纯听版已就绪 · 配合同名 .limed 缓存直接加载字幕".into());
+        ui.set_app_title("limelisten — 听力播放器 (Slim)".into());
+        ui.set_status("就绪 · 配合同名 .limed 缓存直接加载字幕".into());
     }
 
     // 启动时刷新媒体库列表与模型列表
     refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
     refresh_bench_models_ui(&ui, &state.borrow());
+
+    if let Some(path) = open {
+        load_or_analyze_media(path, &ui, &state, &store, &tx, &last_sentence);
+    }
 
     // ---------------- 打开单个音频文件 / .limed 缓存 ----------------
     {
@@ -609,7 +622,7 @@ pub fn run() -> anyhow::Result<()> {
         ui.on_transcribe(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             if cfg!(not(feature = "whisper")) {
-                ui.set_status("当前为 Slim 纯听版（未包含 Whisper），请配合同名 .limed 缓存使用".into());
+                ui.set_status("当前版本未内置转写引擎，请配合同名 .limed 缓存使用".into());
                 return;
             }
             let payload = {
@@ -877,6 +890,29 @@ pub fn run() -> anyhow::Result<()> {
         });
     }
 
+    // ---------------- 隐藏 / 显示听力原文（盲听模式） ----------------
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_toggle_transcript(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let show = {
+                let mut st = state.borrow_mut();
+                st.show_transcript = !st.show_transcript;
+                st.show_transcript
+            };
+            ui.set_show_transcript(show);
+            ui.set_status(
+                if show {
+                    "已显示听力原文"
+                } else {
+                    "已隐藏听力原文，可随时点「显示原文」恢复"
+                }
+                .into(),
+            );
+        });
+    }
+
     // ---------------- 点击字幕词跳转 ----------------
     {
         let ui_weak = ui.as_weak();
@@ -909,7 +945,7 @@ pub fn run() -> anyhow::Result<()> {
             let loop_count = st.loop_count;
             let auto_pause = st.auto_pause;
 
-            let (ord, s, e, title, rows) = {
+            let (seq, s, e, title, rows) = {
                 let Some(core) = st.core.as_mut() else { return };
                 let Some(ch) = core.chapters.get_mut(cur_idx as usize) else { return };
 
@@ -925,11 +961,11 @@ pub fn run() -> anyhow::Result<()> {
                 }
                 ch.source = ChapterSource::Manual;
                 ch.locked = true;
-                (ch.ordinal, ch.start_ms, ch.end_ms, ch.title.clone(), chapter_rows(core))
+                (ch.seq, ch.start_ms, ch.end_ms, ch.title.clone(), chapter_rows(core))
             };
 
             if let Some(mid) = mid {
-                let _ = store.borrow().update_chapter_range(mid, ord, s, e);
+                let _ = store.borrow().update_chapter_range(mid, seq, s, e);
             }
             ui.set_chapters(ModelRc::new(VecModel::from(rows)));
             if let Some(eng) = st.engine.as_ref() {
@@ -953,24 +989,32 @@ pub fn run() -> anyhow::Result<()> {
             let pos = ui.get_position() as u64;
 
             let mut st = state.borrow_mut();
-            let mid = st.media_id;
-            let ord = {
-                let Some(core) = st.core.as_ref() else { return };
-                let Some(ch) = core.chapters.get(cur_idx as usize) else { return };
-                ch.ordinal
+            let Some(mid) = st.media_id else {
+                ui.set_status("当前媒体尚未入库，无法拆分".into());
+                return;
+            };
+            let Some(seq) = st
+                .core
+                .as_ref()
+                .and_then(|core| core.chapters.get(cur_idx as usize))
+                .map(|c| c.seq)
+            else {
+                return;
             };
 
-            if let Some(mid) = mid {
-                let _ = store.borrow().split_chapter(mid, ord, pos);
-                if let Ok(updated) = store.borrow().load_chapters(mid) {
-                    if let Some(core) = st.core.as_mut() {
-                        core.chapters = updated;
-                        let rows = chapter_rows(core);
-                        ui.set_chapters(ModelRc::new(VecModel::from(rows)));
-                        ui.set_status(format!("已在 {} 处拆分章节", crate::cli::fmt_ms(pos)).into());
-                    }
-                }
+            if !store.borrow().split_chapter(mid, seq, pos).unwrap_or(false) {
+                ui.set_status(
+                    format!("光标位置 {} 不在所选章节内部，未拆分", crate::cli::fmt_ms(pos)).into(),
+                );
+                return;
             }
+            let Ok(updated) = store.borrow().load_chapters(mid) else {
+                return;
+            };
+            reload_chapters(&ui, &mut st, updated, seq);
+            ui.set_status(
+                format!("已在 {} 处拆分所选章节（已锁定防覆盖）", crate::cli::fmt_ms(pos)).into(),
+            );
         });
     }
 
@@ -986,24 +1030,28 @@ pub fn run() -> anyhow::Result<()> {
             }
 
             let mut st = state.borrow_mut();
-            let mid = st.media_id;
-            let ord = {
-                let Some(core) = st.core.as_ref() else { return };
-                let Some(ch) = core.chapters.get(cur_idx as usize) else { return };
-                ch.ordinal
+            let Some(mid) = st.media_id else {
+                ui.set_status("当前媒体尚未入库，无法合并".into());
+                return;
+            };
+            let Some((seq, title)) = st
+                .core
+                .as_ref()
+                .and_then(|core| core.chapters.get(cur_idx as usize))
+                .map(|c| (c.seq, c.title.clone()))
+            else {
+                return;
             };
 
-            if let Some(mid) = mid {
-                let _ = store.borrow().merge_next_chapter(mid, ord);
-                if let Ok(updated) = store.borrow().load_chapters(mid) {
-                    if let Some(core) = st.core.as_mut() {
-                        core.chapters = updated;
-                        let rows = chapter_rows(core);
-                        ui.set_chapters(ModelRc::new(VecModel::from(rows)));
-                        ui.set_status(format!("已将第 {ord} 题与下一题合并").into());
-                    }
-                }
+            if !store.borrow().merge_next_chapter(mid, seq).unwrap_or(false) {
+                ui.set_status(format!("[{title}] 没有同级的下一节可合并（题不会跨材料吞并）").into());
+                return;
             }
+            let Ok(updated) = store.borrow().load_chapters(mid) else {
+                return;
+            };
+            reload_chapters(&ui, &mut st, updated, seq);
+            ui.set_status(format!("已将 [{title}] 与下一节合并（已锁定防覆盖）").into());
         });
     }
 
@@ -1231,33 +1279,32 @@ pub fn run() -> anyhow::Result<()> {
                         st.sentences = sentences;
                     }
                     Msg::AnalyzeDone(core, mono, rate) => {
-                        let rows = chapter_rows(&core);
-                        let n_mat = core
-                            .chapters
-                            .iter()
-                            .filter(|c| c.level == ChapterLevel::Material)
-                            .count();
-                        let strong =
+                        let core = *core;
+                        let fresh = canonical_chapters(&core.chapters);
+                        let mut st = state.borrow_mut();
+                        // 落库 + 回读：人工锁定过的章节会原地保留人工边界
+                        let chapters = save_and_reload_chapters(&store, st.media_id, fresh);
+                        let rows = chapter_rows_from_list(&chapters);
+                        let n_mat = chapters.iter().filter(|c| c.is_material()).count();
+                        let n_q = chapters.len() - n_mat;
+                        let _strong =
                             core.chimes.iter().filter(|c| c.confidence >= 0.35).count();
                         ui.set_chapters(ModelRc::new(VecModel::from(rows)));
-                        ui.set_has_chapters(!core.chapters.is_empty());
+                        ui.set_has_chapters(!chapters.is_empty());
                         ui.set_duration(core.info.duration_ms as f32);
                         ui.set_chime_info(
                             format!(
-                                "叮咚 {} 处（强 {}）· 材料 {} / 题 {}",
-                                core.chimes.len(),
-                                strong,
+                                "材料 {} / 题 {}",
                                 n_mat,
-                                core.chapters.len() - n_mat
+                                n_q
                             )
                             .into(),
                         );
                         if cfg!(not(feature = "whisper")) {
                             ui.set_status(
                                 format!(
-                                    "① 切分完成：{} 材料 / {} 题（Slim 纯听版未内置 Whisper，字幕请配合同名 .limed 使用）",
-                                    n_mat,
-                                    core.chapters.len() - n_mat
+                                    "① 切分完成：{} 材料 / {} 题（未内置转写引擎，字幕请配合同名 .limed 使用）",
+                                    n_mat, n_q
                                 )
                                 .into(),
                             );
@@ -1266,7 +1313,7 @@ pub fn run() -> anyhow::Result<()> {
                                 format!(
                                     "① 切分完成：{} 材料 / {} 题 · 语音岛 {} · 间隙 {}（数字静音 {}）",
                                     n_mat,
-                                    core.chapters.len() - n_mat,
+                                    n_q,
                                     core.structure.speech.len(),
                                     core.structure.gaps.len(),
                                     if core.structure.has_digital_silence { "有" } else { "无" }
@@ -1274,16 +1321,21 @@ pub fn run() -> anyhow::Result<()> {
                                 .into(),
                             );
                         }
-                        let mut st = state.borrow_mut();
-                        if let Some(mid) = st.media_id {
-                            let _ = store.borrow().replace_chapters(mid, &core.chapters);
+                        if st.media_id.is_some() {
                             refresh_media_list(&ui, &store.borrow(), &mut st);
                         }
-                        st.core = Some(*core);
+                        let idx = ui.get_current().max(0) as usize;
+                        let range = chapters.get(idx).map(|c| (c.start_ms, c.end_ms));
+                        st.core = Some(AnalysisCore {
+                            path: core.path,
+                            info: core.info,
+                            structure: core.structure,
+                            chimes: core.chimes,
+                            chapters,
+                        });
                         st.mono = *mono;
                         st.mono_rate = rate;
-                        let idx = ui.get_current().max(0) as usize;
-                        if let (Some(eng), Some((a, b))) = (st.engine.as_ref(), st.range(idx)) {
+                        if let (Some(eng), Some((a, b))) = (st.engine.as_ref(), range) {
                             eng.set_loop(a, b, st.loop_count);
                             eng.set_stop_at(if st.auto_pause { b } else { 0 });
                         }
@@ -1438,22 +1490,19 @@ fn load_or_analyze_media(
     if let Some(limed_path) = find_matching_limed(&path, info.duration_ms, Some(size as u64)) {
         if let Ok(limed) = LimedFile::load(&limed_path) {
             cache_hit = true;
-            let chapters = limed.chapters;
+            // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化
+            let fresh = canonical_chapters(&limed.chapters);
             let sents = limed.sentences;
+            let chapters = save_and_reload_chapters(&store, media_id, fresh);
             if let Some(mid) = media_id {
-                let st_ref = store.borrow();
-                let _ = st_ref.replace_chapters(mid, &chapters);
-                let _ = st_ref.save_sentences(mid, &sents);
+                let _ = store.borrow().save_sentences(mid, &sents);
             }
             let rows = chapter_rows_from_list(&chapters);
             ui.set_chapters(ModelRc::new(VecModel::from(rows)));
             ui.set_has_chapters(!chapters.is_empty());
             ui.set_duration(info.duration_ms as f32);
 
-            let n_mat = chapters
-                .iter()
-                .filter(|c| c.level == ChapterLevel::Material)
-                .count();
+            let n_mat = chapters.iter().filter(|c| c.is_material()).count();
             ui.set_chime_info(
                 format!("来自 .limed 缓存 · 材料 {} / 题 {}", n_mat, chapters.len() - n_mat).into(),
             );
@@ -1515,10 +1564,7 @@ fn load_or_analyze_media(
                     ui.set_has_chapters(!chapters.is_empty());
                     ui.set_duration(info.duration_ms as f32);
 
-                    let n_mat = chapters
-                        .iter()
-                        .filter(|c| c.level == ChapterLevel::Material)
-                        .count();
+                    let n_mat = chapters.iter().filter(|c| c.is_material()).count();
                     ui.set_chime_info(
                         format!("已加载本地分析 · 材料 {} / 题 {}", n_mat, chapters.len() - n_mat).into(),
                     );
@@ -1613,7 +1659,7 @@ fn spawn_analyze(
         return;
     }
     if let Some(ui) = ui_weak.upgrade() {
-        ui.set_status("① 切分中：解码 → 静音结构 → 叮咚…".into());
+        ui.set_status("① 切分中：正在分析音频结构…".into());
     }
     std::thread::spawn(move || {
         let tx2 = tx.clone();
@@ -1641,10 +1687,71 @@ fn chapter_rows(core: &AnalysisCore) -> Vec<ChapterRow> {
     chapter_rows_from_list(&core.chapters)
 }
 
+/// 章节列表规范化：「材料 → 其题」顺序（幂等）。
+///
+/// 左侧导航是扁平列表 + `level` 缩进渲染的，`current` / 上一题 / 下一题 / 题级微调
+/// 全部按列表下标定位；三条入口（重新切分 / `.limed` / 本地库）都要过这里，
+/// 并保证**内存列表与落库内容一致**，否则题会挂到错误的材料下面、微调也会打偏。
+fn canonical_chapters(list: &[Chapter]) -> Vec<Chapter> {
+    normalize_chapters(list)
+}
+
+/// 落库后回读权威列表（人工锁定的章节会原地保留），失败则退回本次结果。
+fn save_and_reload_chapters(
+    store: &Rc<RefCell<Store>>,
+    media_id: Option<i64>,
+    fresh: Vec<Chapter>,
+) -> Vec<Chapter> {
+    let Some(mid) = media_id else {
+        return fresh;
+    };
+    if let Err(e) = store.borrow().replace_chapters(mid, &fresh) {
+        eprintln!("[limelisten] 章节落库失败: {e}");
+    }
+    match store.borrow().load_chapters(mid) {
+        Ok(saved) if !saved.is_empty() => saved,
+        _ => fresh,
+    }
+}
+
+/// 用库里的权威列表刷新左侧导航，并尽量保持当前选中的章节不变（按 `seq` 认人）。
+fn reload_chapters(ui: &MainWindow, st: &mut GuiState, chapters: Vec<Chapter>, keep_seq: u32) {
+    let rows = chapter_rows_from_list(&chapters);
+    let current = chapters
+        .iter()
+        .position(|c| c.seq == keep_seq)
+        .map(|p| p as i32)
+        .unwrap_or(-1);
+    let range = chapters.get(current.max(0) as usize).map(|c| (c.start_ms, c.end_ms));
+
+    if let Some(core) = st.core.as_mut() {
+        core.chapters = chapters;
+    }
+    ui.set_chapters(ModelRc::new(VecModel::from(rows)));
+    ui.set_current(current);
+    if let Some((a, b)) = range {
+        apply_range(st, ui, a, b);
+    }
+}
+
 fn chapter_rows_from_list(chapters: &[Chapter]) -> Vec<ChapterRow> {
+    debug_assert!(
+        lime_core::chapters_are_canonical(chapters),
+        "章节列表必须先是「材料 → 其题」规范顺序，否则左侧导航会错位: {chapters:?}"
+    );
+    // 材料行带上「下面有几道题」的小徒章
+    let mut sub_counts = vec![0i32; chapters.len()];
+    for c in chapters.iter() {
+        if let Some(p) = c.parent {
+            if p < chapters.len() {
+                sub_counts[p] += 1;
+            }
+        }
+    }
     chapters
         .iter()
-        .map(|c| ChapterRow {
+        .enumerate()
+        .map(|(i, c)| ChapterRow {
             title: c.title.clone().into(),
             time_range: format!(
                 "{} – {}",
@@ -1652,7 +1759,8 @@ fn chapter_rows_from_list(chapters: &[Chapter]) -> Vec<ChapterRow> {
                 crate::cli::fmt_ms(c.end_ms)
             )
             .into(),
-            level: if c.level == ChapterLevel::Material { 0 } else { 1 },
+            level: if c.is_material() { 0 } else { 1 },
+            sub_count: sub_counts[i],
             confidence: c.confidence,
             low_confidence: c.confidence < 0.8,
             locked: c.locked,

@@ -29,6 +29,8 @@ global Ri {
     out property <string> check: "\u{eb7b}";
     out property <string> time: "\u{f20f}";
     out property <string> volume: "\u{f2a2}";
+    out property <string> eye: "\u{ecb5}";
+    out property <string> eye-off: "\u{ecb7}";
 }
 
 component RiButton inherits Rectangle {
@@ -102,6 +104,7 @@ export struct ChapterRow {
     title: string,
     time-range: string,
     level: int,        // 0 = 材料, 1 = 题
+    sub-count: int,    // 材料下的题数（题行为 0）
     confidence: float,
     low-confidence: bool,
     locked: bool,
@@ -155,6 +158,8 @@ export component MainWindow inherits Window {
     in-out property <bool> auto-pause: true;
     in-out property <float> transcribe-progress: -1;   // <0 = 未在转写
     in-out property <bool> has-subtitles: false;
+    // 听力原文（逐词字幕）是否可见：关掉即「盲听模式」，NEXT 预览也一起遮蔽
+    in-out property <bool> show-transcript: true;
     in-out property <bool> has-chapters: false;
     in-out property <bool> is-slim: false;
     in-out property <string> chime-info: "";
@@ -186,6 +191,7 @@ export component MainWindow inherits Window {
     callback toggle-auto-pause();
     callback export-subtitles(string); // "srt", "lrc", "txt"
     callback click-word(int);
+    callback toggle-transcript(); // 隐藏 / 显示听力原文
 
     // 测速与模型命令
     callback open-bench-modal();
@@ -250,7 +256,7 @@ export component MainWindow inherits Window {
 
                 RiButton {
                     icon: Ri.captions;
-                    text: root.is-slim ? "② 纯听版(免转写)" : (root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "② 转写字幕");
+                    text: root.is-slim ? "② 转写字幕 (免转写)" : (root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "② 转写字幕");
                     primary: root.transcribe-progress >= 0;
                     enabled: !root.is-slim;
                     clicked => { root.transcribe(); }
@@ -400,20 +406,39 @@ export component MainWindow inherits Window {
                             VerticalLayout {
                                 spacing: 2px;
                                 for row[i] in root.chapters : Rectangle {
-                                    height: row.level == 0 ? 32px : 28px;
-                                    background: i == root.current ? #dbeafe : transparent;
+                                    height: row.level == 0 ? 34px : 28px;
+                                    background: i == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
                                     border-radius: 5px;
 
+                                    // 题行的缩进导轨：一眼看出属于上面那份材料，
+                                    // 顺序错乱时（题跑出材料外面）也能立刻发现。
+                                    if row.level == 1 : Rectangle {
+                                        x: 16px;
+                                        y: 5px;
+                                        width: 2px;
+                                        height: parent.height - 10px;
+                                        border-radius: 1px;
+                                        background: i == root.current ? #60a5fa : #cbd5e1;
+                                    }
+
                                     HorizontalLayout {
-                                        padding-left: row.level == 0 ? 8px : 24px;
+                                        padding-left: row.level == 0 ? 8px : 26px;
                                         padding-right: 8px;
                                         spacing: 6px;
+                                        alignment: center;
 
                                         // 锁标记
                                         if row.locked : RiIcon {
                                             icon: Ri.lock;
                                             icon-size: 12px;
                                             icon-color: #b45309;
+                                        }
+
+                                        // 材料图标
+                                        if row.level == 0 : RiIcon {
+                                            icon: Ri.tab-chapter;
+                                            icon-size: 13px;
+                                            icon-color: i == root.current ? #1d4ed8 : #4f46e5;
                                         }
 
                                         Text {
@@ -426,6 +451,25 @@ export component MainWindow inherits Window {
                                             overflow: elide;
                                         }
 
+                                        // 材料下的题数：让两级层次一眼可读
+                                        if row.sub-count > 0 : Rectangle {
+                                            height: 16px;
+                                            border-radius: 8px;
+                                            background: #e0e7ff;
+                                            HorizontalLayout {
+                                                padding-left: 6px;
+                                                padding-right: 6px;
+                                                alignment: center;
+                                                Text {
+                                                    text: row.sub-count + " 题";
+                                                    color: #4338ca;
+                                                    font-size: 10px;
+                                                    font-weight: 600;
+                                                    vertical-alignment: center;
+                                                }
+                                            }
+                                        }
+
                                         Text {
                                             text: row.time-range;
                                             color: #64748b;
@@ -433,7 +477,7 @@ export component MainWindow inherits Window {
                                             vertical-alignment: center;
                                         }
                                     }
-                                    TouchArea { clicked => { root.select-chapter(i); } }
+                                    row-touch := TouchArea { clicked => { root.select-chapter(i); } }
                                 }
                             }
                         }
@@ -612,17 +656,26 @@ export component MainWindow inherits Window {
                                 overflow: elide;
                             }
                             Text {
-                                text: root.has-subtitles ? "逐词卡拉OK · 点击任意词即可跳转" : "未转写字幕（可直接听切分题段）";
-                                color: root.has-subtitles ? #059669 : #94a3b8;
+                                text: !root.has-subtitles ? "未转写字幕" : (root.show-transcript ? "逐词卡拉OK · 点击任意词即可跳转" : "听力原文已隐藏");
+                                color: root.has-subtitles ? (root.show-transcript ? #059669 : #b45309) : #94a3b8;
                                 font-size: 12px;
                                 vertical-alignment: center;
+                            }
+
+                            // 隐藏 / 显示听力原文：练习时先自己听，需要对照再点开
+                            RiButton {
+                                icon: root.show-transcript ? Ri.eye-off : Ri.eye;
+                                icon-size: 14px;
+                                text: root.show-transcript ? "隐藏原文" : "显示原文";
+                                btn-height: 24px;
+                                clicked => { root.toggle-transcript(); }
                             }
                         }
 
                         Rectangle { height: 1px; background: #f1f5f9; }
 
-                        // 逐词高亮主舞台
-                        ScrollView {
+                        // 逐词高亮主舞台（隐藏原文时换成占位卡片，一个字都不露）
+                        if root.show-transcript : ScrollView {
                             VerticalLayout {
                                 alignment: start;
                                 spacing: 10px;
@@ -659,6 +712,49 @@ export component MainWindow inherits Window {
                             }
                         }
 
+                        if !root.show-transcript : Rectangle {
+                            vertical-stretch: 1;
+                            background: #f8fafc;
+                            border-radius: 8px;
+                            border-width: 1px;
+                            border-color: #e2e8f0;
+
+                            VerticalLayout {
+                                alignment: center;
+                                spacing: 10px;
+
+                                RiIcon {
+                                    icon: Ri.eye-off;
+                                    icon-size: 40px;
+                                    icon-color: #cbd5e1;
+                                }
+
+                                Text {
+                                    text: "听力原文已隐藏";
+                                    color: #334155;
+                                    font-size: 18px;
+                                    font-weight: 700;
+                                    horizontal-alignment: center;
+                                }
+
+                                Text {
+                                    text: root.has-subtitles ? "点击「显示原文」即可查看字幕" : "尚未生成字幕，切分题段仍可正常播放";
+                                    color: #94a3b8;
+                                    font-size: 12px;
+                                    horizontal-alignment: center;
+                                }
+
+                                HorizontalLayout {
+                                    alignment: center;
+                                    RiButton {
+                                        icon: Ri.eye;
+                                        text: "显示原文";
+                                        clicked => { root.toggle-transcript(); }
+                                    }
+                                }
+                            }
+                        }
+
                         // 下一句弱化预览
                         Rectangle {
                             height: 44px;
@@ -683,7 +779,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                                 Text {
-                                    text: root.has-subtitles ? root.next-line : "（点击顶部「② 转写字幕」生成逐词打轴字幕）";
+                                    text: !root.has-subtitles ? "（点击顶部「② 转写字幕」生成逐词打轴字幕）" : (root.show-transcript ? root.next-line : "（原文已隐藏）");
                                     color: #64748b;
                                     font-size: 13px;
                                     vertical-alignment: center;
@@ -878,7 +974,7 @@ export component MainWindow inherits Window {
                         RiIcon { icon: Ri.headphone; icon-size: 20px; icon-color: #3b82f6; }
                         Text {
                             horizontal-stretch: 1;
-                            text: "当前为 Slim 纯听版，已剥离 Whisper 推理引擎。无需下载模型，配合同名 .limed 缓存即可享受毫秒级秒开和卡拉OK高亮！";
+                            text: "当前版本未内置转写引擎。无需下载模型，配合同名 .limed 缓存即可直接加载字幕。";
                             font-size: 12px;
                             color: #334155;
                             vertical-alignment: center;

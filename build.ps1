@@ -6,7 +6,12 @@
 #
 # 用法：  .\build.ps1              # cargo build
 #         .\build.ps1 run          # cargo run
-#         .\build.ps1 build --release
+#         .\build.ps1 build --release   # 发布版（自带静态 CRT，见下）
+#         .\build.ps1 slim              # 纯听版 = --release --no-default-features
+#
+# 静态 CRT（+crt-static）：release 产物把 C/C++ 运行库静态链进 exe，不再依赖
+# vcruntime140.dll / msvcp140.dll（默认的 MSVC 目标是动态 CRT），这样绿色便携包拷到
+# 没装 VC++ 运行时的机器也能直接跑。debug 构建不加，保持增量编译速度。
 $ErrorActionPreference = 'Stop'
 
 $IsSlim = $false
@@ -15,6 +20,15 @@ if (-not $CargoArgs -or $CargoArgs.Count -eq 0) { $CargoArgs = @('build') }
 if ($CargoArgs[0] -eq 'slim') {
     $IsSlim = $true
     $CargoArgs = @('build', '-p', 'lime-app', '--no-default-features', '--release')
+}
+
+# release 专属编译参数：静态 CRT。注：只认命令行里的 --release，不靠 profile 名推断，
+# slim 那条路径上面已经显式带了 --release。
+$IsRelease = $CargoArgs -contains '--release'
+if ($IsRelease) {
+    $StaticCrt = '-C target-feature=+crt-static'
+    if ($env:RUSTFLAGS) { $env:RUSTFLAGS = "$env:RUSTFLAGS $StaticCrt" } else { $env:RUSTFLAGS = $StaticCrt }
+    Write-Host "== release 静态 CRT: RUSTFLAGS=$env:RUSTFLAGS"
 }
 
 $vcvars = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" -ErrorAction SilentlyContinue |
@@ -51,6 +65,9 @@ if ($code -eq 0 -and $IsSlim) {
         $mb = [math]::Round($len / 1MB, 2)
         Write-Host "== ✅ 已生成 Slim 独立可执行文件: $dstExe ($mb MB)" -ForegroundColor Green
     }
+    # slim 和完整版共用 `target\release\limelisten.exe` 这一个产物路径，
+    # 所以上面这步会把完整版覆盖成纯听版（只差 whisper 特性，文件名一模一样）。
+    Write-Host "== ⚠️ 完整版已被覆盖为纯听版；要保留完整版再跑一次：.\build.ps1 build --release" -ForegroundColor Yellow
 }
 
 exit $code
