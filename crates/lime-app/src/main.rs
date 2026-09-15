@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 //! limelisten — 听力播放器（Rust + Slint）
 //!
 //! 无界面模式（自动化验收用）：
@@ -19,7 +21,61 @@ slint::include_modules!();
 
 use std::path::Path;
 
+#[cfg(windows)]
+fn attach_console() {
+    extern "system" {
+        fn AttachConsole(dw_process_id: u32) -> i32;
+        fn GetStdHandle(n_std_handle: u32) -> *mut std::ffi::c_void;
+        fn SetStdHandle(n_std_handle: u32, h_handle: *mut std::ffi::c_void) -> i32;
+        fn CreateFileW(
+            lp_file_name: *const u16,
+            dw_desired_access: u32,
+            dw_share_mode: u32,
+            lp_security_attributes: *mut std::ffi::c_void,
+            dw_creation_disposition: u32,
+            dw_flags_and_attributes: u32,
+            h_template_file: *mut std::ffi::c_void,
+        ) -> *mut std::ffi::c_void;
+    }
+    const ATTACH_PARENT_PROCESS: u32 = 0xFFFFFFFF;
+    const STD_OUTPUT_HANDLE: u32 = 0xFFFFFFF5;
+    const STD_ERROR_HANDLE: u32 = 0xFFFFFFF4;
+    const INVALID_HANDLE: *mut std::ffi::c_void = -1isize as *mut std::ffi::c_void;
+    const GENERIC_READ: u32 = 0x80000000;
+    const GENERIC_WRITE: u32 = 0x40000000;
+    const FILE_SHARE_READ: u32 = 1;
+    const FILE_SHARE_WRITE: u32 = 2;
+    const OPEN_EXISTING: u32 = 3;
+
+    unsafe {
+        let current_out = GetStdHandle(STD_OUTPUT_HANDLE);
+        if !current_out.is_null() && current_out != INVALID_HANDLE {
+            return;
+        }
+
+        if AttachConsole(ATTACH_PARENT_PROCESS) != 0 {
+            let conout: Vec<u16> = "CONOUT$\0".encode_utf16().collect();
+            let handle = CreateFileW(
+                conout.as_ptr(),
+                GENERIC_READ | GENERIC_WRITE,
+                FILE_SHARE_READ | FILE_SHARE_WRITE,
+                std::ptr::null_mut(),
+                OPEN_EXISTING,
+                0,
+                std::ptr::null_mut(),
+            );
+            if !handle.is_null() && handle != INVALID_HANDLE {
+                SetStdHandle(STD_OUTPUT_HANDLE, handle);
+                SetStdHandle(STD_ERROR_HANDLE, handle);
+            }
+        }
+    }
+}
+
 fn main() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    attach_console();
+
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     let args: Vec<String> = std::env::args().skip(1).collect();
 
