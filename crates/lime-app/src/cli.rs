@@ -68,6 +68,50 @@ pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCo
     })
 }
 
+/// 当前转写管线的指纹（模型 + 解码参数 + 语言）。
+///
+/// 用途：`.limed` 与 SQLite 里的旧字幕缓存要按它判有效——参数一变就不再展示旧文本
+/// （例如 `-mc -1` 时代那些整句重复的幻觉字幕）。Slim 纯听版没有转写引擎，返回 `None`，
+/// 此时不校验缓存（否则 Slim 版将无字幕可放）。
+#[cfg(feature = "whisper")]
+pub fn asr_fingerprint() -> Option<String> {
+    let model = paths::default_model();
+    Some(lime_asr::pipeline_fingerprint(
+        model.as_deref(),
+        lime_asr::DEFAULT_LANGUAGE,
+    ))
+}
+
+#[cfg(not(feature = "whisper"))]
+pub fn asr_fingerprint() -> Option<String> {
+    None
+}
+
+/// 只含解码参数 + 语言的指纹：`.limed` 这类可拷贝分享的缓存按它判有效，
+/// 换机器/换模型播放不会失效。
+#[cfg(feature = "whisper")]
+pub fn asr_params_fingerprint() -> Option<String> {
+    Some(lime_asr::pipeline_params_fingerprint(lime_asr::DEFAULT_LANGUAGE))
+}
+
+#[cfg(not(feature = "whisper"))]
+pub fn asr_params_fingerprint() -> Option<String> {
+    None
+}
+
+/// 转写所用模型的名字（落库展示用）。
+#[cfg(feature = "whisper")]
+pub fn asr_model_label() -> String {
+    paths::default_model()
+        .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
+        .unwrap_or_else(|| "whisper".into())
+}
+
+#[cfg(not(feature = "whisper"))]
+pub fn asr_model_label() -> String {
+    "whisper".into()
+}
+
 /// 把已解码的单声道样本写成 16 kHz wav（Whisper 要求）。
 #[cfg(feature = "whisper")]
 pub fn dump_16k_wav(mono: &[f32], src_rate: u32, out: &Path) -> Result<()> {
@@ -115,7 +159,7 @@ pub fn transcribe(
     mut progress: impl FnMut(&str, f32),
 ) -> Result<Transcript> {
     let exe = paths::find_whisper_exe()
-        .ok_or_else(|| anyhow!("找不到 whisper-cli.exe（请放到 tools/whisper/<cuda|blas>/Release/）"))?;
+        .ok_or_else(|| anyhow!("找不到 whisper-cli.exe（可在 GUI「测速与模型」里一键下载，或放到 tools/whisper/<cuda|blas>/Release/）"))?;
     let model = paths::default_model()
         .ok_or_else(|| anyhow!("找不到 ggml 模型（请放到 models/ 目录）"))?;
 
@@ -390,6 +434,9 @@ pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
         tr.landmarks.len(),
         t0.elapsed()
     );
+    if let Some(fp) = asr_fingerprint() {
+        println!("转写管线指纹：{fp}");
+    }
     println!("\n=== 地标诊断 ===");
     println!("{}", lime_analyze::snap::landmark_diagnosis(&tr.raw_words, &core.structure, &core.chimes));
     if !tr.landmarks.is_empty() {
@@ -613,6 +660,7 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
             .unwrap_or(0),
         version: 1,
         generator: format!("limelisten {}", env!("CARGO_PKG_VERSION")),
+        asr_fp: asr_params_fingerprint().unwrap_or_default(),
     };
 
     let limed = LimedFile::new(meta, lime_core::normalize_chapters(&core.chapters), sentences);
@@ -652,6 +700,17 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
     );
     println!("  原文件大小: {} 字节", limed.meta.file_size);
     println!("  生成工具: {}", limed.meta.generator);
+    // 字幕有效性：与当前转写管线不一致时，打开音频时字会被丢弃（章节保留）
+    let fp_state = match asr_params_fingerprint() {
+        None => "（Slim 版不校验）".to_string(),
+        Some(cur) if limed.meta.asr_fp == cur => "✓ 与当前转写参数一致".to_string(),
+        Some(_) if limed.meta.asr_fp.is_empty() => "✗ 旧格式/无指纹（字幕会失效，需重新转写）".to_string(),
+        Some(_) => "✗ 与当前转写参数不一致（字幕会失效，需重新转写）".to_string(),
+    };
+    println!(
+        "  字幕指纹: {fp_state}（{}）",
+        if limed.meta.asr_fp.is_empty() { "空" } else { limed.meta.asr_fp.as_str() }
+    );
     println!("\n[章节结构] 共 {} 节:", chapters.len());
     print_chapter_tree(&chapters, 15);
     println!("\n[字幕预览] 共 {} 句:", limed.sentences.len());
@@ -802,6 +861,8 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
             .arg("-ml")
             .arg("1")
             .arg("-sow")
+            .arg("-mc")
+            .arg("0")
             .arg("-pp")
             .arg("-of")
             .arg(&out_base)

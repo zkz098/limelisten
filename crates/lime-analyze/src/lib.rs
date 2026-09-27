@@ -346,13 +346,22 @@ pub fn build_chapters(
     let mut out = Vec::new();
     for (m_idx, (start, end, conf, from_gap, from_chime)) in ranges.iter().enumerate() {
         let mat_idx = out.len();
-        let mat_title = anchors
-            .iter()
-            .filter(|a| a.time_ms >= *start && a.time_ms < end + snap_ms)
-            .find_map(|a| a.title_hint())
-            .unwrap_or_else(|| {
-                format!("材料 {}", m_idx + 1)
-            });
+        // 首份材料按产品口径就是「引言」（开考提示/试音/说明段），不参与材料编号；
+        // 其余材料保留 `材料 N` 自动名，由 `normalize_chapters` 统一顺延编号。
+        let auto_title = if m_idx == 0 {
+            lime_core::INTRO_TITLE.to_string()
+        } else {
+            format!("材料 {}", m_idx + 1)
+        };
+        let mat_title = if m_idx == 0 {
+            auto_title
+        } else {
+            anchors
+                .iter()
+                .filter(|a| a.time_ms >= *start && a.time_ms < end + snap_ms)
+                .find_map(|a| a.title_hint())
+                .unwrap_or(auto_title)
+        };
         out.push(Chapter {
             seq: out.len() as u32,
             level: ChapterLevel::Material,

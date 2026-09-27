@@ -1,7 +1,7 @@
 //! 库与缓存：SQLite（库/进度/分析缓存/生词本）。schema 见 docs/PLAN.md §5。
 
 use lime_core::{normalize_chapters, Chapter, ChapterLevel, ChapterSource, Error, Media, Result, Sentence, Word};
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -423,6 +423,20 @@ impl Store {
         Ok(())
     }
 
+    /// 清空某音频的字幕/词缓存（**章节保留**）。
+    ///
+    /// 转写管线指纹变化时调用：旧参数（如 `-mc -1` 的重复幻觉）产生的字幕
+    /// 不应再展示，等用户用新管线重新转写。
+    pub fn clear_sentences(&self, media_id: i64) -> Result<()> {
+        let tx = self.conn.unchecked_transaction().map_err(|e| Error::Store(e.to_string()))?;
+        tx.execute("DELETE FROM sentence WHERE media_id=?1", params![media_id])
+            .map_err(|e| Error::Store(e.to_string()))?;
+        tx.execute("DELETE FROM word WHERE media_id=?1", params![media_id])
+            .map_err(|e| Error::Store(e.to_string()))?;
+        tx.commit().map_err(|e| Error::Store(e.to_string()))?;
+        Ok(())
+    }
+
     pub fn load_sentences(&self, media_id: i64) -> Result<Vec<Sentence>> {
         let mut s_stmt = self
             .conn
@@ -500,6 +514,26 @@ impl Store {
             )
             .map_err(|e| Error::Store(e.to_string()))?;
         Ok(())
+    }
+
+    /// 读取分析元信息 `(model, params_hash)`；没有记录时返回 `None`。
+    ///
+    /// `params_hash` 存的是转写管线指纹（`lime_asr::pipeline_fingerprint`）：
+    /// 打开文件时用它判断旧字幕缓存是否还能用。
+    pub fn load_analysis(&self, media_id: i64) -> Result<Option<(String, String)>> {
+        self.conn
+            .query_row(
+                "SELECT model, params_hash FROM analysis WHERE media_id=?1",
+                params![media_id],
+                |r| {
+                    Ok((
+                        r.get::<_, Option<String>>(0)?.unwrap_or_default(),
+                        r.get::<_, Option<String>>(1)?.unwrap_or_default(),
+                    ))
+                },
+            )
+            .optional()
+            .map_err(|e| Error::Store(e.to_string()))
     }
 
     pub fn has_analysis(&self, media_id: i64) -> Result<bool> {
@@ -740,6 +774,40 @@ mod tests {
         assert_eq!(prog, Some((3500, 1)));
     }
 
+    /// 转写指纹与字幕清空：参数变化后旧字幕要能被丢弃（章节保留）。
+    #[test]
+    fn analysis_fingerprint_and_clear_sentences() {
+        let (s, mid) = open_with_media();
+        assert_eq!(s.load_analysis(mid).unwrap(), None);
+
+        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-old", "").unwrap();
+        assert_eq!(
+            s.load_analysis(mid).unwrap(),
+            Some((
+                "ggml-large-v3-turbo-q5_0.bin".to_string(),
+                "fp-old".to_string()
+            ))
+        );
+        // 同一 media 重复保存是覆盖写
+        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-new", "").unwrap();
+        assert_eq!(s.load_analysis(mid).unwrap().unwrap().1, "fp-new");
+
+        s.replace_chapters(mid, &two_materials()).unwrap();
+        let sents = vec![Sentence {
+            start_ms: 0,
+            end_ms: 1000,
+            text: "三个月之后,我会有十分钟的时间阅读一遍".into(),
+            words: vec![Word { start_ms: 0, end_ms: 1000, text: "三个月之后".into() }],
+            chapter: Some(0),
+        }];
+        s.save_sentences(mid, &sents).unwrap();
+        assert_eq!(s.load_sentences(mid).unwrap().len(), 1);
+
+        s.clear_sentences(mid).unwrap();
+        assert!(s.load_sentences(mid).unwrap().is_empty());
+        assert_eq!(s.load_chapters(mid).unwrap().len(), 6, "章节不能被顺带清掉");
+    }
+
     /// 回归：左侧题目 UI 错乱的根因 —— 老代码 `ORDER BY ordinal, start_ms`
     /// 会把材料全挤到前面、把所有材料的「第 1 题」排在一起。
     #[test]
@@ -750,7 +818,7 @@ mod tests {
         let loaded = s.load_chapters(mid).unwrap();
         assert_eq!(
             titles(&loaded),
-            vec!["材料 1", "第 1 题", "第 2 题", "材料 2", "第 1 题", "第 2 题"]
+            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题", "第 2 题"]
         );
         assert!(lime_core::chapters_are_canonical(&loaded));
         assert_eq!(loaded[1].parent, Some(0));
@@ -798,7 +866,7 @@ mod tests {
         let loaded = s.load_chapters(1).unwrap();
         assert_eq!(
             titles(&loaded),
-            vec!["材料 1", "第 1 题", "第 2 题", "材料 2", "第 1 题", "第 2 题"]
+            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题", "第 2 题"]
         );
         assert!(lime_core::chapters_are_canonical(&loaded));
         assert_eq!(loaded[4].parent, Some(3));
@@ -853,17 +921,17 @@ mod tests {
         let (s, mid) = open_with_media();
         s.replace_chapters(mid, &two_materials()).unwrap();
 
-        // 材料 1 的第 1 题（seq = 1）在 8s 处拆成两题
+        // 首份材料（引言）的第 1 题（seq = 1）在 8s 处拆成两题
         assert!(s.split_chapter(mid, 1, 8_000).unwrap());
         let loaded = s.load_chapters(mid).unwrap();
         assert_eq!(
             titles(&loaded),
             vec![
-                "材料 1",
+                "引言",
                 "第 1 题",
                 "第 2 题",
                 "第 3 题",
-                "材料 2",
+                "材料 1",
                 "第 1 题",
                 "第 2 题"
             ]
@@ -882,7 +950,7 @@ mod tests {
         assert_eq!(merged[1].end_ms, 20_000);
         assert!(merged[1].locked);
 
-        // 材料 1 的最后一题没有同级下一题 → 不吃掉下一份材料
+        // 首份材料的最后一题没有同级下一题 → 不吃掉下一份材料
         assert!(!s.merge_next_chapter(mid, 2).unwrap());
         // 光标不在章节范围内 → 拆分不动
         assert!(!s.split_chapter(mid, 2, 61_000).unwrap());

@@ -1,0 +1,48 @@
+// Windows 资源脚本 —— 由 crates/lime-app/build.rs 调 rc.exe 编译后链接进 limelisten.exe。
+//
+// 为什么需要它：进程没启动时（资源管理器、快捷方式、开始菜单、Alt-Tab 缩略图）看到的图标
+// 来自 exe 自己的资源，而不是运行时设的窗口图标。所以这里嵌图标 + 版本信息；
+// 窗口/任务栏图标另由 Slint 的 Window.icon 负责（见 ui/app.slint）。
+//
+// rc.exe 默认按系统 ANSI 代码页读脚本，不声明的话下面中文会变乱码。
+#pragma code_page(65001)
+
+// 版本号由 build.rs 从 Cargo.toml 注入（/D VER_NUM=0, 1, 0, 0  /D VER_STR="0.1.0"），
+// 避免「Cargo.toml 升了版、exe 属性还是旧版」这种两处各写一份的老毛病。
+#ifndef VER_NUM
+#define VER_NUM 0, 0, 0, 0
+#endif
+#ifndef VER_STR
+#define VER_STR "0.0.0"
+#endif
+
+// 1 = 主图标。Windows 取 exe 里 id 最小的图标当「应用程序图标」，所以它必须是这个。
+#define IDI_APPICON 1
+IDI_APPICON ICON "limelisten.ico"
+
+1 VERSIONINFO
+  FILEVERSION     VER_NUM
+  PRODUCTVERSION  VER_NUM
+  FILEFLAGSMASK   0x3fL
+  FILEFLAGS       0x0L
+  FILEOS          0x40004L
+  FILETYPE        0x1L
+  FILESUBTYPE     0x0L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "080404b0"   // 0x0804 简体中文 + 0x04b0 (1200) Unicode
+    BEGIN
+      VALUE "FileDescription", "limelisten - 听力播放器"
+      VALUE "FileVersion", VER_STR
+      VALUE "InternalName", "limelisten"
+      VALUE "OriginalFilename", "limelisten.exe"
+      VALUE "ProductName", "limelisten"
+      VALUE "ProductVersion", VER_STR
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x804, 1200
+  END
+END

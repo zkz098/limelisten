@@ -82,6 +82,10 @@ impl Chapter {
     }
 }
 
+/// 首份材料的标题：听力文件开头通常是开考提示/试音/说明段，独立为「引言」，
+/// 不参与材料编号（`材料 1` 从第二份材料起算）。
+pub const INTRO_TITLE: &str = "引言";
+
 /// 章节列表是否已是规范顺序：`seq` = 下标、材料在前、每道题紧跟其材料。
 ///
 /// 仅用于测试与 debug 断言；不满足时用 [`normalize_chapters`] 整理。
@@ -134,6 +138,13 @@ pub fn normalize_chapters(chapters: &[Chapter]) -> Vec<Chapter> {
     }
 
     let mut out: Vec<Chapter> = Vec::with_capacity(chapters.len());
+    // 首份材料若是自动命名的（`材料 N` / `材料 N（叮咚）`）或已是「引言」，
+    // 则规范为「引言」：老缓存/老库里叫「材料 1」的开头段也能自动升级；
+    // 后续材料从「材料 1」重新编号。人工/锚点改过名的首份材料保持原样。
+    let first_is_intro = mats
+        .first()
+        .is_some_and(|&i| is_intro_or_auto_material(&chapters[i]));
+
     for (mi, &index) in mats.iter().enumerate() {
         let mat_pos = out.len() as usize;
         let seq = out.len() as u32;
@@ -142,8 +153,14 @@ pub fn normalize_chapters(chapters: &[Chapter]) -> Vec<Chapter> {
         mat.level = ChapterLevel::Material;
         mat.parent = None;
         mat.ordinal = mi as u32 + 1;
-        if let Some(t) = renumber_material_title(&mat.title, mat.ordinal) {
-            mat.title = t;
+        if first_is_intro && mi == 0 {
+            mat.title = INTRO_TITLE.to_string();
+        } else {
+            // 引言不占材料号：它后面的材料显示为「材料 1」
+            let display_ord = if first_is_intro { mi as u32 } else { mi as u32 + 1 };
+            if let Some(t) = renumber_material_title(&mat.title, display_ord) {
+                mat.title = t;
+            }
         }
         out.push(mat);
 
@@ -229,6 +246,11 @@ fn pick_parent_material(chapters: &[Chapter], qi: usize, mats: &[usize]) -> Opti
         .copied()
         .find(|&m| chapters[m].start_ms <= q.start_ms)
         .or_else(|| by_start.first().copied())
+}
+
+/// 判断首份材料是否应当按「引言」处理：已经是引言，或名字仍是自动生成的 `材料 N`。
+fn is_intro_or_auto_material(c: &Chapter) -> bool {
+    c.title.trim() == INTRO_TITLE || renumber_material_title(&c.title, 0).is_some()
 }
 
 /// 自动题名形如「第 3 题」，可带历史遗留的「(2)」后缀；人工改名返回 None 不动。
@@ -341,11 +363,15 @@ mod tests {
 
     #[test]
     fn normalize_is_idempotent_on_canonical_list() {
+        let mut m1 = mat(0, 1, 0, 60_000);
+        m1.title = INTRO_TITLE.into();
+        let mut m2 = mat(3, 2, 70_000, 130_000);
+        m2.title = "材料 1".into(); // 引言不占材料号
         let list = vec![
-            mat(0, 1, 0, 60_000),
+            m1,
             question(1, 1, Some(0), 0, 20_000),
             question(2, 2, Some(0), 20_000, 60_000),
-            mat(3, 2, 70_000, 130_000),
+            m2,
             question(4, 1, Some(3), 70_000, 90_000),
         ];
         assert!(chapters_are_canonical(&list));
@@ -368,7 +394,7 @@ mod tests {
         let fixed = normalize_chapters(&broken);
         assert_eq!(
             titles(&fixed),
-            vec!["材料 1", "第 1 题", "第 2 题", "材料 2", "第 1 题"]
+            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题"]
         );
         assert!(chapters_are_canonical(&fixed));
         assert_eq!(fixed[1].parent, Some(0));
@@ -385,7 +411,7 @@ mod tests {
         let mut b1 = question(2, 1, Some(0), 70_000, 130_000);
         b1.title = "第 1 题".into();
         let out = normalize_chapters(&[m1, m2, b1]);
-        assert_eq!(titles(&out), vec!["材料 1", "材料 2", "第 1 题"]);
+        assert_eq!(titles(&out), vec!["引言", "材料 1", "第 1 题"]);
         assert_eq!(out[2].parent, Some(1));
     }
 
@@ -402,10 +428,39 @@ mod tests {
         let out = normalize_chapters(&[m, q1, q2, named]);
         assert_eq!(
             titles(&out),
-            vec!["材料 1", "第 1 题", "第 2 题", "第二问（用户改名）"]
+            vec!["引言", "第 1 题", "第 2 题", "第二问（用户改名）"]
         );
         assert_eq!(out[1].ordinal, 1);
         assert_eq!(out[2].ordinal, 2);
+    }
+
+    /// 首份材料（开考提示/试音）规范为「引言」，后续材料从「材料 1」顺延编号；幂等。
+    #[test]
+    fn first_material_becomes_intro_and_others_renumber() {
+        let m1 = mat(0, 1, 0, 60_000);
+        let m2 = mat(1, 2, 70_000, 130_000);
+        let q1 = question(2, 1, Some(0), 0, 20_000);
+        let q2 = question(3, 1, Some(1), 70_000, 130_000);
+        let out = normalize_chapters(&[m1, m2, q1, q2]);
+        assert_eq!(titles(&out), vec!["引言", "第 1 题", "材料 1", "第 1 题"]);
+        assert!(chapters_are_canonical(&out));
+        assert_eq!(normalize_chapters(&out), out, "引言规范化必须幂等");
+
+        // 老缓存里的 `材料 1（叮咚）` 也应自动升级为「引言」
+        let mut old = mat(0, 1, 0, 60_000);
+        old.title = "材料 1（叮咚）".into();
+        let out = normalize_chapters(&[old, mat(1, 2, 70_000, 130_000)]);
+        assert_eq!(titles(&out), vec!["引言", "材料 1"]);
+    }
+
+    /// 人工/锚点改过名的首份材料不被强制改成「引言」，后续材料照常编号。
+    #[test]
+    fn custom_first_material_title_is_kept() {
+        let mut m1 = mat(0, 1, 0, 60_000);
+        m1.title = "Text 1".into();
+        let m2 = mat(1, 2, 70_000, 130_000);
+        let out = normalize_chapters(&[m1, m2]);
+        assert_eq!(titles(&out), vec!["Text 1", "材料 2"]);
     }
 
     #[test]

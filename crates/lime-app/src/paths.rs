@@ -23,14 +23,20 @@ fn candidates(rel: &str) -> Vec<PathBuf> {
     vec![product_root().join(rel), project_root().join(rel), exe_dir().join(rel)]
 }
 
-/// 运行时的“产品根目录”：优先 exe 旁边的 portable 目录结构，其次项目根。
+/// 运行时的“产品根目录”：优先 exe 旁边的 portable 目录结构，其次开发项目根。
 fn product_root() -> PathBuf {
     let exe = exe_dir();
     // 便携结构：<root>/limelisten.exe + <root>/tools + <root>/models
     if exe.join("tools").is_dir() || exe.join("models").is_dir() {
-        exe
+        return exe;
+    }
+    // 开发态（cargo run）：exe 在 target/… 下，项目根里有 Cargo.toml，用项目根；
+    // 发布包拷到别的机器时该路径不存在，退回 exe 目录，保证下载的模型/工具落在自己旁边。
+    let proj = project_root();
+    if proj.join("Cargo.toml").is_file() {
+        proj
     } else {
-        project_root()
+        exe
     }
 }
 
@@ -204,6 +210,79 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
 
 pub fn get_spec_meta(spec: &str) -> Option<&'static ModelSpecMeta> {
     MODEL_SPECS.iter().find(|m| m.spec == spec)
+}
+
+// ---------------------------------------------------------------------------
+// whisper-cli 转写引擎：软件内一键下载（官方 Windows 预编译包，解压即用）
+// ---------------------------------------------------------------------------
+
+/// 转写引擎根目录：`<产品根>/tools/whisper`
+pub fn whisper_dir() -> PathBuf {
+    let d = product_root().join("tools").join("whisper");
+    let _ = std::fs::create_dir_all(&d);
+    d
+}
+
+pub struct WhisperBuildMeta {
+    /// 目录/标识：`cpu` / `blas` / `cublas12.4`（与 `find_whisper_exe` 的搜索路径对应）
+    pub id: &'static str,
+    pub name: &'static str,
+    pub desc: &'static str,
+    /// 官方发布包文件名（zip 内为 `Release/whisper-cli.exe` + DLL）
+    pub asset: &'static str,
+    pub size_bytes: u64,
+    /// 依次尝试的下载地址（国内镜像优先，GitHub 直连兜底）
+    pub urls: &'static [&'static str],
+}
+
+/// 三种 x64 运行包。zip 解压后落在 `tools/whisper/<id>/Release/`，与 `find_whisper_exe` 对齐。
+pub const WHISPER_BUILDS: &[WhisperBuildMeta] = &[
+    WhisperBuildMeta {
+        id: "cpu",
+        name: "CPU 通用版",
+        desc: "纯 CPU 运行，任何机器都能用",
+        asset: "whisper-bin-x64.zip",
+        size_bytes: 7_982_101,
+        urls: &[
+            "https://gh-proxy.com/https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip",
+            "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-bin-x64.zip",
+        ],
+    },
+    WhisperBuildMeta {
+        id: "blas",
+        name: "OpenBLAS 加速版",
+        desc: "CPU + OpenBLAS，速度更稳（推荐）",
+        asset: "whisper-blas-bin-x64.zip",
+        size_bytes: 20_769_031,
+        urls: &[
+            "https://gh-proxy.com/https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-blas-bin-x64.zip",
+            "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-blas-bin-x64.zip",
+        ],
+    },
+    WhisperBuildMeta {
+        id: "cublas12.4",
+        name: "NVIDIA CUDA 12.4 版",
+        desc: "N 卡加速，需已安装 NVIDIA 驱动",
+        asset: "whisper-cublas-12.4.0-bin-x64.zip",
+        size_bytes: 677_887_125,
+        urls: &[
+            "https://gh-proxy.com/https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-cublas-12.4.0-bin-x64.zip",
+            "https://github.com/ggml-org/whisper.cpp/releases/download/v1.9.1/whisper-cublas-12.4.0-bin-x64.zip",
+        ],
+    },
+];
+
+pub fn get_whisper_build(id: &str) -> Option<&'static WhisperBuildMeta> {
+    WHISPER_BUILDS.iter().find(|b| b.id == id)
+}
+
+/// 某个构建包的 `whisper-cli.exe` 是否已就位
+pub fn whisper_build_installed(id: &str) -> bool {
+    whisper_dir()
+        .join(id)
+        .join("Release")
+        .join("whisper-cli.exe")
+        .is_file()
 }
 
 /// 缓存/数据目录（分析中间产物：16k wav、whisper json）

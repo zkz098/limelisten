@@ -31,6 +31,8 @@ global Ri {
     out property <string> volume: "\u{f2a2}";
     out property <string> eye: "\u{ecb5}";
     out property <string> eye-off: "\u{ecb7}";
+    out property <string> arrow-down-s: "\u{ea4e}";
+    out property <string> arrow-right-s: "\u{ea6e}";
 }
 
 component RiButton inherits Rectangle {
@@ -101,6 +103,7 @@ export struct MediaRow {
 }
 
 export struct ChapterRow {
+    chapter-index: int, // 在规范章节列表中的下标（可见行是它的子集，回调必须用它）
     title: string,
     time-range: string,
     level: int,        // 0 = 材料, 1 = 题
@@ -108,12 +111,24 @@ export struct ChapterRow {
     confidence: float,
     low-confidence: bool,
     locked: bool,
+    collapsed: bool,   // 材料行：已折叠（题行恒 false）
 }
 
 export struct WordCell {
     text: string,
     start-ms: int,
     idx: int,          // 在整句里的序号（点击跳转用）
+}
+
+export struct WhisperBuildRow {
+    id: string,
+    name: string,
+    desc: string,
+    size-str: string,
+    installed: bool,
+    downloading: bool,
+    download-progress: float,
+    download-status: string,
 }
 
 export struct ModelBenchmarkRow {
@@ -133,6 +148,9 @@ export struct ModelBenchmarkRow {
 export component MainWindow inherits Window {
     in-out property <string> app-title: "limelisten — 听力播放器";
     title: root.app-title;
+    // 窗口/任务栏图标（Windows 下即 WM_SETICON + taskbar icon）。
+    // exe 自身的图标（资源管理器、快捷方式看得见）由 assets/limelisten.rc 嵌入，见 build.rs。
+    icon: @image-url("assets/logo.png");
     preferred-width: 1320px;
     preferred-height: 860px;
     min-width: 1000px;
@@ -144,6 +162,7 @@ export component MainWindow inherits Window {
     in-out property <int> current-media-idx: -1;
     in-out property <int> sidebar-tab: 0; // 0 = 章节导航, 1 = 媒体库
     in-out property <[ChapterRow]> chapters: [];
+    in-out property <int> chapter-total: 0;
     in-out property <[[WordCell]]> lines: [];
     in-out property <int> current: -1;
     in-out property <int> active-word: -1;
@@ -172,6 +191,11 @@ export component MainWindow inherits Window {
     in-out property <bool> is-benchmarking: false;
     in-out property <string> bench-summary: "点击下方「开始测速」将自动评测已就绪模型性能；或点击「下载」补充更轻量的模型规格。";
 
+    // ---- 转写引擎（whisper-cli） ----
+    in-out property <bool> whisper-installed: false;
+    in-out property <string> whisper-status: "";
+    in-out property <[WhisperBuildRow]> whisper-builds: [];
+
     // ---- 回调命令 ----
     callback open-file();
     callback open-folder();
@@ -198,6 +222,10 @@ export component MainWindow inherits Window {
     callback close-bench-modal();
     callback start-bench();
     callback download-model(string);
+    callback download-whisper(string);
+
+    // 材料折叠 / 展开
+    callback toggle-chapter-collapse(int);
 
     // 题级微调命令 (P1-3)
     callback adjust-chapter(float, bool); // (delta_seconds, is_start)
@@ -223,13 +251,30 @@ export component MainWindow inherits Window {
                 spacing: 10px;
                 alignment: center;
 
-                // Logo
-                Text {
-                    text: root.is-slim ? "🍋 limelisten (Slim)" : "🍋 limelisten";
-                    color: #0f172a;
-                    font-size: 16px;
-                    font-weight: 800;
-                    vertical-alignment: center;
+                // Logo：真图标 ui/assets/logo.png（取自项目根目录 logo.png，黑底已抠为透明底；
+                // 正方形母版 256x256，图形本体上下各留 135/1215 的空白，故外面给 36x36 的盒子）
+                // 这里的 HorizontalLayout 显式 horizontal-stretch: 0：整组只占内容宽度，
+                // 剩余空间全部留给下面那个 horizontal-stretch: 1 的状态栏 spacer。
+                HorizontalLayout {
+                    horizontal-stretch: 0;
+                    spacing: 8px;
+                    alignment: center;
+
+                    Image {
+                        source: @image-url("assets/logo.png");
+                        width: 36px;
+                        height: 36px;
+                        image-fit: contain;
+                    }
+
+                    Text {
+                        horizontal-stretch: 0;
+                        text: root.is-slim ? "limelisten (Slim)" : "limelisten";
+                        color: #0f172a;
+                        font-size: 16px;
+                        font-weight: 800;
+                        vertical-alignment: center;
+                    }
                 }
 
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
@@ -353,7 +398,7 @@ export component MainWindow inherits Window {
                                     icon-color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
                                 }
                                 Text {
-                                    text: "章节导航 (" + root.chapters.length + ")";
+                                    text: root.chapters.length == root.chapter-total ? "章节导航 (" + root.chapter-total + ")" : "章节导航 (" + root.chapters.length + "/" + root.chapter-total + ")";
                                     color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
                                     font-size: 13px;
                                     font-weight: root.sidebar-tab == 0 ? 700 : 500;
@@ -404,11 +449,15 @@ export component MainWindow inherits Window {
                         // 列表本体
                         ScrollView {
                             VerticalLayout {
+                                width: parent.width;
                                 spacing: 2px;
-                                for row[i] in root.chapters : Rectangle {
+                                for row in root.chapters : Rectangle {
                                     height: row.level == 0 ? 34px : 28px;
-                                    background: i == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
+                                    background: row.chapter-index == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
                                     border-radius: 5px;
+
+                                    // 整行点击选中（声明在布局之前，让折叠箭头的 TouchArea 优先命中）
+                                    row-touch := TouchArea { clicked => { root.select-chapter(row.chapter-index); } }
 
                                     // 题行的缩进导轨：一眼看出属于上面那份材料，
                                     // 顺序错乱时（题跑出材料外面）也能立刻发现。
@@ -418,14 +467,36 @@ export component MainWindow inherits Window {
                                         width: 2px;
                                         height: parent.height - 10px;
                                         border-radius: 1px;
-                                        background: i == root.current ? #60a5fa : #cbd5e1;
+                                        background: row.chapter-index == root.current ? #60a5fa : #cbd5e1;
                                     }
 
                                     HorizontalLayout {
-                                        padding-left: row.level == 0 ? 8px : 26px;
+                                        width: 100%;
+                                        padding-left: row.level == 0 ? 6px : 26px;
                                         padding-right: 8px;
                                         spacing: 6px;
-                                        alignment: center;
+                                        cross-axis-alignment: center;
+
+                                        // 材料折叠箭头：首份材料（引言）默认折叠
+                                        if row.level == 0 : Rectangle {
+                                            width: 20px;
+                                            height: 20px;
+                                            border-radius: 4px;
+                                            background: arrow-touch.has-hover ? #e2e8f0 : transparent;
+
+                                            Text {
+                                                text: row.collapsed ? Ri.arrow-right-s : Ri.arrow-down-s;
+                                                font-family: "remixicon";
+                                                color: #475569;
+                                                font-size: 14px;
+                                                horizontal-alignment: center;
+                                                vertical-alignment: center;
+                                            }
+                                            arrow-touch := TouchArea {
+                                                mouse-cursor: pointer;
+                                                clicked => { root.toggle-chapter-collapse(row.chapter-index); }
+                                            }
+                                        }
 
                                         // 锁标记
                                         if row.locked : RiIcon {
@@ -438,7 +509,7 @@ export component MainWindow inherits Window {
                                         if row.level == 0 : RiIcon {
                                             icon: Ri.tab-chapter;
                                             icon-size: 13px;
-                                            icon-color: i == root.current ? #1d4ed8 : #4f46e5;
+                                            icon-color: row.chapter-index == root.current ? #1d4ed8 : #4f46e5;
                                         }
 
                                         Text {
@@ -447,7 +518,6 @@ export component MainWindow inherits Window {
                                             font-weight: row.level == 0 ? 700 : 400;
                                             font-size: row.level == 0 ? 13px : 12px;
                                             vertical-alignment: center;
-                                            horizontal-stretch: 1;
                                             overflow: elide;
                                         }
 
@@ -475,9 +545,10 @@ export component MainWindow inherits Window {
                                             color: #64748b;
                                             font-size: 11px;
                                             vertical-alignment: center;
+                                            horizontal-stretch: 1;
+                                            horizontal-alignment: right;
                                         }
                                     }
-                                    row-touch := TouchArea { clicked => { root.select-chapter(i); } }
                                 }
                             }
                         }
@@ -560,6 +631,7 @@ export component MainWindow inherits Window {
                     if root.sidebar-tab == 1 : ScrollView {
                         vertical-stretch: 1;
                         VerticalLayout {
+                            width: parent.width;
                             spacing: 4px;
                             for m[i] in root.media-list : Rectangle {
                                 height: 48px;
@@ -910,13 +982,16 @@ export component MainWindow inherits Window {
 
         Rectangle {
             width: 760px;
+            height: modal-content.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: max(0px, (parent.height - self.height) / 2);
             background: #ffffff;
             border-radius: 12px;
             border-width: 1px;
             border-color: #cbd5e1;
             clip: true;
 
-            VerticalLayout {
+            modal-content := VerticalLayout {
                 padding: 18px;
                 spacing: 12px;
 
@@ -978,6 +1053,128 @@ export component MainWindow inherits Window {
                             font-size: 12px;
                             color: #334155;
                             vertical-alignment: center;
+                        }
+                    }
+                }
+
+                // 转写引擎（whisper-cli.exe）：软件内一键下载
+                if !root.is-slim : Rectangle {
+                    background: root.whisper-installed ? #f0fdf4 : #fff7ed;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: root.whisper-installed ? #bbf7d0 : #fed7aa;
+
+                    VerticalLayout {
+                        padding: 10px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            RiIcon {
+                                icon: root.whisper-installed ? Ri.check : Ri.tools;
+                                icon-size: 16px;
+                                icon-color: root.whisper-installed ? #16a34a : #ea580c;
+                            }
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text {
+                                    text: "转写引擎 whisper-cli.exe";
+                                    font-size: 12px;
+                                    font-weight: 700;
+                                    color: #0f172a;
+                                }
+                                Text {
+                                    text: root.whisper-status;
+                                    font-size: 11px;
+                                    color: root.whisper-installed ? #15803d : #9a3412;
+                                    overflow: elide;
+                                }
+                            }
+                        }
+
+                        for b in root.whisper-builds : Rectangle {
+                            height: 34px;
+                            background: #ffffff;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: b.installed ? #bbf7d0 : #e2e8f0;
+
+                            HorizontalLayout {
+                                padding-left: 10px;
+                                padding-right: 10px;
+                                spacing: 8px;
+                                cross-axis-alignment: center;
+
+                                Text {
+                                    text: b.name;
+                                    font-size: 11px;
+                                    font-weight: 700;
+                                    color: #1e293b;
+                                    width: 110px;
+                                }
+                                Text {
+                                    text: b.desc;
+                                    font-size: 11px;
+                                    color: #64748b;
+                                    horizontal-stretch: 1;
+                                    overflow: elide;
+                                    vertical-alignment: center;
+                                }
+                                Text {
+                                    text: b.size-str;
+                                    font-size: 11px;
+                                    color: #94a3b8;
+                                    vertical-alignment: center;
+                                }
+
+                                if b.installed && !b.downloading : Rectangle {
+                                    width: 74px;
+                                    height: 24px;
+                                    border-radius: 6px;
+                                    background: #dcfce7;
+                                    HorizontalLayout {
+                                        alignment: center;
+                                        spacing: 4px;
+                                        RiIcon { icon: Ri.check; icon-size: 12px; icon-color: #16a34a; }
+                                        Text {
+                                            text: "已就绪";
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            color: #16a34a;
+                                            vertical-alignment: center;
+                                        }
+                                    }
+                                }
+
+                                if b.downloading : Rectangle {
+                                    width: 230px;
+                                    height: 24px;
+                                    border-radius: 6px;
+                                    background: #e0f2fe;
+                                    HorizontalLayout {
+                                        padding-left: 8px;
+                                        padding-right: 8px;
+                                        alignment: center;
+                                        Text {
+                                            text: b.download-status;
+                                            font-size: 11px;
+                                            font-weight: 600;
+                                            color: #0284c7;
+                                            vertical-alignment: center;
+                                            overflow: elide;
+                                        }
+                                    }
+                                }
+
+                                if !b.installed && !b.downloading : RiButton {
+                                    icon: Ri.add;
+                                    text: "下载";
+                                    btn-height: 24px;
+                                    clicked => { root.download-whisper(b.id); }
+                                }
+                            }
                         }
                     }
                 }

@@ -32,6 +32,12 @@ pub struct LimedMeta {
     pub version: u32,
     #[serde(default = "default_generator")]
     pub generator: String,
+    /// 生成字幕时使用的转写管线指纹（见 `lime_asr::pipeline_fingerprint`）。
+    ///
+    /// 空串 = 老缓存（没有指纹）或外部工具生成——调用方比对不一致时应**保留章节、
+    /// 丢弃字幕**，避免继续展示旧解码参数（如 `-mc -1` 的重复幻觉）产生的文本。
+    #[serde(default)]
+    pub asr_fp: String,
 }
 
 fn default_version() -> u32 {
@@ -213,6 +219,7 @@ mod tests {
             created_at: 1700000000,
             version: 1,
             generator: "limelisten_test".into(),
+            asr_fp: "asr-pipeline/test".into(),
         };
 
         let chapters = vec![
@@ -322,5 +329,19 @@ mod tests {
         assert!(crate::chapters_are_canonical(&fixed));
         assert_eq!(fixed[1].seq, 1);
         assert_eq!(fixed[1].parent, Some(0));
+    }
+
+    /// 老缓存（或外部工具生成）没有 `asr_fp`：应能正常解析，指纹为空串，
+    /// 交由调用方判定"字幕需要重新转写"（章节仍然可用）。
+    #[test]
+    fn test_legacy_limed_without_asr_fp_loads_empty() {
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&serde_json::to_vec(&make_sample_limed()).unwrap()).unwrap();
+        json["meta"].as_object_mut().unwrap().remove("asr_fp");
+
+        let decoded: LimedFile = serde_json::from_value(json).unwrap();
+        assert_eq!(decoded.meta.asr_fp, "");
+        assert_eq!(decoded.chapters.len(), 2);
+        assert_eq!(decoded.sentences.len(), 1);
     }
 }

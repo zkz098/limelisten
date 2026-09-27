@@ -1,8 +1,13 @@
 //! Whisper 驱动：调用 whisper-cli.exe（子进程）→ 解析 JSON → 词级时间戳 → 句子重组。
 //!
-//! 关键实测结论（docs/GRILLING.md §2.5/§2.4 与 U1）：
+//! 关键实测结论（docs/GRILLING.md §2.5/§2.4/§2.8 与 U1）：
 //! - 必须用 `-ml 1 -sow` 逐词模式：普通模式时间戳只有 1 s 粒度，逐词模式 10 ms。
 //! - 不要用 `-dtw`：会关闭 flash attention 并让时间戳退化成整秒。
+//! - **必须 `-mc 0`（关闭跨窗口上下文）**：默认 `-mc -1` 会把上一段的解码文本当
+//!   下一段的提示，遇到答题静音就陷入整句重复循环（9.2听力练习一 实测：
+//!   "三个月之后…"×43 吃掉 80.8→194.1 s、"听话"×38 吃掉 268.1→374.1 s；
+//!   训练1 出现 "the last chapter of the month."×17）。`-mc 64` 仍会循环，
+//!   只有 0 能根治；顺带把 944 s 的转写从 43 s 压到 9 s（不再有 prompt 阶段）。
 //! - `(bell chimes)` 标签**不可靠**（同一段音频单独转写时不再出现，被并入整句），
 //!   因此标记识别的主信号是"空白长词段 + 静音结构"，文本标签仅作可选提示。
 
@@ -22,6 +27,10 @@ pub struct WhisperCli {
     pub language: String,
 }
 
+/// 默认转写语言：应用面向英文听力材料（中文提示语模型也能正确转写）。
+/// 指纹计算与 `WhisperCli::new` 共用这个常量，避免两处漂移。
+pub const DEFAULT_LANGUAGE: &str = "en";
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Progress {
     pub percent: f32,
@@ -30,7 +39,7 @@ pub struct Progress {
 impl WhisperCli {
     pub fn new(exe: impl Into<PathBuf>, model: impl Into<PathBuf>) -> Self {
         let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        Self { exe: exe.into(), model: model.into(), threads, language: "en".into() }
+        Self { exe: exe.into(), model: model.into(), threads, language: DEFAULT_LANGUAGE.into() }
     }
 
     /// 逐词转写。`out_base` 为输出文件前缀（生成 `<base>.json`）。
@@ -63,6 +72,10 @@ impl WhisperCli {
             .arg("-ml")
             .arg("1")
             .arg("-sow")
+            // 关闭跨窗口上下文：默认 -1 会拿上一段文本当提示，长静音上必然滚出
+            // 整段重复幻觉（见模块头 §2.8 实测）。
+            .arg("-mc")
+            .arg("0")
             .arg("-pp")
             .arg("-of")
             .arg(out_base)
@@ -92,6 +105,37 @@ impl WhisperCli {
             .map_err(|e| Error::Asr(format!("read {}: {e}", json.display())))?;
         parse_words_json(&raw)
     }
+}
+
+/// 解码参数 + 语言（**不含模型**）的指纹。
+///
+/// `.limed` 这类可拷贝分享的预生成缓存放的是它：模型只是"谁转写的"，
+/// 解码参数才是"字幕会不会是旧幻觉"的判定依据。
+pub fn pipeline_params_fingerprint(language: &str) -> String {
+    const FORMAT: &str = "asr-pipeline/2|ml=1|sow=1|mc=0";
+    format!("{FORMAT}|lang={language}")
+}
+
+/// 转写管线完整指纹（解码参数 + 语言 + 模型）：本机 SQLite 字幕缓存按它判有效。
+///
+/// 用来让**旧字幕缓存自动失效**（SQLite `analysis.params_hash`）：否则用户升级后
+/// 重新打开文件，看到的仍是旧参数产生的字幕——比如 `-mc -1` 时代那些整句重复的
+/// 幻觉文本。
+///
+/// `FORMAT` 里的版本号在**解码参数变更时手动递增**，与模型/语言解耦。
+pub fn pipeline_fingerprint(model: Option<&Path>, language: &str) -> String {
+    let model_desc = match model {
+        Some(p) => {
+            let name = p
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default();
+            let size = std::fs::metadata(p).map(|m| m.len()).unwrap_or(0);
+            format!("{name}:{size}")
+        }
+        None => "none".into(),
+    };
+    format!("{}|model={model_desc}", pipeline_params_fingerprint(language))
 }
 
 /// 解析 `whisper_print_progress_callback: progress = 42%` 这类进度行。
@@ -234,4 +278,43 @@ pub fn blank_spans(words: &[Word], min_ms: u64) -> Vec<(u64, u64)> {
         .filter(|w| w.text.trim().is_empty() && w.end_ms.saturating_sub(w.start_ms) >= min_ms)
         .map(|w| (w.start_ms, w.end_ms))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 指纹必须把"参数格式、语言、模型"三者都带上：少任何一项，缓存失效都会漏网。
+    #[test]
+    fn pipeline_fingerprint_covers_params_lang_model() {
+        let no_model = pipeline_fingerprint(None, "en");
+        assert!(no_model.contains("mc=0"), "指纹要能反映重复幻觉的修复: {no_model}");
+        assert!(no_model.contains("lang=en"));
+        assert!(no_model.contains("model=none"));
+
+        // 换语言 / 换模型都要得到不同指纹
+        assert_ne!(no_model, pipeline_fingerprint(None, "zh"));
+        let p = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
+        let with_model = pipeline_fingerprint(Some(&p), "en");
+        assert!(with_model.contains("Cargo.toml:"));
+        assert_ne!(no_model, with_model);
+
+        // 参数指纹不带模型：`--limed` 预生成缓存换机器播放不应失效
+        let params = pipeline_params_fingerprint("en");
+        assert!(no_model.starts_with(&params));
+        assert!(with_model.starts_with(&params));
+    }
+
+    /// 逐词 JSON 解析：whisper-cli 的 `-oj` 顶层是 `transcription`，偏移是毫秒。
+    #[test]
+    fn parse_words_json_reads_offsets() {
+        let raw = r#"{"transcription":[
+            {"offsets":{"from":0,"to":120},"text":" Hi"},
+            {"offsets":{"from":120,"to":540},"text":" there."}
+        ]}"#;
+        let words = parse_words_json(raw).expect("parse");
+        assert_eq!(words.len(), 2);
+        assert_eq!((words[0].start_ms, words[0].end_ms), (0, 120));
+        assert_eq!((words[1].start_ms, words[1].end_ms), (120, 540));
+    }
 }

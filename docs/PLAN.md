@@ -32,7 +32,7 @@
 |---|---|---|
 | D1 | ASR = **whisper.cpp 预编译 exe 子进程**（不绑 Rust 绑定、不本地编译） | `whisper-cublas-12.4.0-bin-x64.zip` 在 sm_120 上实测可用：`compute capability 12.0` / `use gpu = 1` / `flash attn = 1` |
 | D2 | 版本**钉死 `b5130`**，不用 `latest` | v1.9.4/v1.9.3 release 附件数为 **0**；附件只挂在 `b####` 标签 |
-| D3 | 转写模式 = **`-ml 1 -sow` 逐词**，句子自己重组 | 普通模式时间戳只有 **1s** 粒度；逐词模式 **10ms**（45 种毫秒余数）；文本质量一致 |
+| D3 | 转写模式 = **`-ml 1 -sow -mc 0` 逐词**，句子自己重组 | 普通模式时间戳只有 **1s** 粒度；逐词模式 **10ms**（45 种毫秒余数）；文本质量一致。`-mc 0` 关掉跨窗口上下文：实测默认 `-mc -1` 在长静音上整句重复（`9.2` 出现 `"三个月之后…"`×43 / `"听话"`×38，`训练1` 出现 `"the last chapter of the month."`×17），`-mc 64` 仍循环，只有 0 干净且快 ~4.7×（GRILLING §2.8） |
 | D4 | **不用 `-dtw`** | DTW 会关掉 flash attention（`dtw_token_timestamps is not supported with flash_attn`），时间戳退化为整秒 |
 | D5 | **不用 VAD** | turbo 逐词 RTF **0.026**（60s→1.6s），不缺速度；VAD 时间戳语义与非 VAD 有 ~1.5s 差异，规避 |
 | D6 | 默认模型 = **large-v3-turbo q5_0**（547MB）+ Silero VAD 备用 | 实测 RTF 0.026（逐词）/0.20（普通）；用户选择 |
@@ -46,6 +46,7 @@
 | D11 | 便携 = 同时带 **cublas 版 + blas 版**，自动探测回退 | cublas 包 643MB 解压；无 N 卡机器需要 CPU 兵底（用户选择） |
 | D12 | 音频格式 = **纯 Rust 解码（symphonia）**，不绑 ffmpeg | 素材只有 mp3；便携包不想多 100MB |
 | D13 | 不做翻译、不做词典 | 用户明确选择 |
+| D16 | 字幕缓存带**转写管线指纹**（`asr-pipeline/2|ml=1|sow=1|mc=0|lang=en|model=…`）：SQLite `analysis.params_hash` 存全指纹、`.limed` 的 `meta.asr_fp` 存参数指纹；打开文件时不一致→保留章节、丢弃字幕 | 否则升级后用户仍会看到 `-mc -1` 时代的重复幻觉字幕（GRILLING §2.8） |
 
 ---
 
@@ -88,7 +89,7 @@ limelisten-portable\
      0.35–2.5 s: 句/话语边界
      2.5–5.0 s : 题边界
      ≥ 5.0 s   : 材料边界（答题间隔，实测 ~10 s）
-④ 写出 16 kHz 单声道 wav → whisper-cli（`-ml 1 -sow -oj`）  ← D3
+④ 写出 16 kHz 单声道 wav → whisper-cli（`-ml 1 -sow -mc 0 -oj`）  ← D3
 ⑤ 解析词级 JSON → 词表（10 ms 级时间戳）
 ⑥ 语义扫描（可配置正则表，**默认关闭**，仅作命名提示）：← D8/D9
      `Text|Unit|Lesson|Passage\s*(\d+|[A-D])` → 显式材料编号

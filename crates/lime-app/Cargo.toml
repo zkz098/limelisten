@@ -27,3 +27,5 @@ rfd = "0.15"
 
 [build-dependencies]
 slint-build.workspace = true
+# Windows 图标 + 版本信息（assets/limelisten.rc），自动找 rc.exe，非 Windows 自动跳过
+embed-resource = "3"
