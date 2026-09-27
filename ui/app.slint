@@ -166,7 +166,7 @@ export component MainWindow inherits Window {
     in-out property <[[WordCell]]> lines: [];
     in-out property <int> current: -1;
     in-out property <int> active-word: -1;
-    in-out property <string> status: "就绪 · 打开音频或文件夹开始";
+    in-out property <string> status: "就绪";
     in-out property <string> info: "1.00x";
     in-out property <string> time-display: "00:00 / 00:00";
     in-out property <string> next-line: "";
@@ -189,7 +189,7 @@ export component MainWindow inherits Window {
     in-out property <bool> show-bench-modal: false;
     in-out property <[ModelBenchmarkRow]> bench-models: [];
     in-out property <bool> is-benchmarking: false;
-    in-out property <string> bench-summary: "点击下方「开始测速」将自动评测已就绪模型性能；或点击「下载」补充更轻量的模型规格。";
+    in-out property <string> bench-summary: "";
 
     // ---- 转写引擎（whisper-cli） ----
     in-out property <bool> whisper-installed: false;
@@ -295,13 +295,13 @@ export component MainWindow inherits Window {
 
                 RiButton {
                     icon: Ri.scissors;
-                    text: "① 切分";
+                    text: "切分";
                     clicked => { root.analyze(); }
                 }
 
                 RiButton {
                     icon: Ri.captions;
-                    text: root.is-slim ? "② 转写字幕 (免转写)" : (root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "② 转写字幕");
+                    text: root.is-slim ? "转写字幕" : (root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕");
                     primary: root.transcribe-progress >= 0;
                     enabled: !root.is-slim;
                     clicked => { root.transcribe(); }
@@ -398,7 +398,7 @@ export component MainWindow inherits Window {
                                     icon-color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
                                 }
                                 Text {
-                                    text: root.chapters.length == root.chapter-total ? "章节导航 (" + root.chapter-total + ")" : "章节导航 (" + root.chapters.length + "/" + root.chapter-total + ")";
+                                    text: root.chapters.length == root.chapter-total ? "章节 (" + root.chapter-total + ")" : "章节 (" + root.chapters.length + "/" + root.chapter-total + ")";
                                     color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
                                     font-size: 13px;
                                     font-weight: root.sidebar-tab == 0 ? 700 : 500;
@@ -434,7 +434,7 @@ export component MainWindow inherits Window {
 
                     // 信息指示
                     if root.sidebar-tab == 0 : Text {
-                        text: root.chime-info != "" ? root.chime-info : "选择章节进行播放或微调";
+                        text: root.chime-info;
                         color: #94a3b8;
                         font-size: 11px;
                         height: 14px;
@@ -573,7 +573,7 @@ export component MainWindow inherits Window {
                                         icon-color: #334155;
                                     }
                                     Text {
-                                        text: "题级微调 (第 " + (root.current + 1) + " 项 · 修改后自动锁定防覆盖)";
+                                        text: "微调 (第 " + (root.current + 1) + " 项)";
                                         color: #334155;
                                         font-size: 11px;
                                         font-weight: 700;
@@ -606,19 +606,19 @@ export component MainWindow inherits Window {
                                     spacing: 6px;
                                     RiButton {
                                         icon: Ri.headphone;
-                                        text: "试听边界 2s";
+                                        text: "试听边界";
                                         btn-height: 28px;
                                         clicked => { root.preview-boundary(); }
                                     }
                                     RiButton {
                                         icon: Ri.split;
-                                        text: "光标处拆分";
+                                        text: "拆分";
                                         btn-height: 28px;
                                         clicked => { root.split-current-chapter(); }
                                     }
                                     RiButton {
                                         icon: Ri.merge;
-                                        text: "合并下一题";
+                                        text: "合并下一节";
                                         btn-height: 28px;
                                         clicked => { root.merge-next-chapter(); }
                                     }
@@ -727,9 +727,9 @@ export component MainWindow inherits Window {
                                 vertical-alignment: center;
                                 overflow: elide;
                             }
-                            Text {
-                                text: !root.has-subtitles ? "未转写字幕" : (root.show-transcript ? "逐词卡拉OK · 点击任意词即可跳转" : "听力原文已隐藏");
-                                color: root.has-subtitles ? (root.show-transcript ? #059669 : #b45309) : #94a3b8;
+                            if !root.show-transcript : Text {
+                                text: "原文已隐藏";
+                                color: #b45309;
                                 font-size: 12px;
                                 vertical-alignment: center;
                             }
@@ -802,17 +802,10 @@ export component MainWindow inherits Window {
                                 }
 
                                 Text {
-                                    text: "听力原文已隐藏";
+                                    text: "原文已隐藏";
                                     color: #334155;
-                                    font-size: 18px;
-                                    font-weight: 700;
-                                    horizontal-alignment: center;
-                                }
-
-                                Text {
-                                    text: root.has-subtitles ? "点击「显示原文」即可查看字幕" : "尚未生成字幕，切分题段仍可正常播放";
-                                    color: #94a3b8;
-                                    font-size: 12px;
+                                    font-size: 16px;
+                                    font-weight: 600;
                                     horizontal-alignment: center;
                                 }
 
@@ -851,7 +844,7 @@ export component MainWindow inherits Window {
                                     vertical-alignment: center;
                                 }
                                 Text {
-                                    text: !root.has-subtitles ? "（点击顶部「② 转写字幕」生成逐词打轴字幕）" : (root.show-transcript ? root.next-line : "（原文已隐藏）");
+                                    text: (!root.has-subtitles || !root.show-transcript) ? "" : root.next-line;
                                     color: #64748b;
                                     font-size: 13px;
                                     vertical-alignment: center;
@@ -954,13 +947,13 @@ export component MainWindow inherits Window {
 
                             RiButton {
                                 icon: root.loop-count == 0 ? Ri.repeat : Ri.repeat-one;
-                                text: root.loop-count == 0 ? "单题不循环" : "循环 " + root.loop-count + " 次";
+                                text: root.loop-count == 0 ? "不循环" : "循环 " + root.loop-count + " 次";
                                 clicked => { root.loop-cycle(); }
                             }
 
                             RiButton {
                                 icon: root.auto-pause ? Ri.pause-circle : Ri.play-circle;
-                                text: root.auto-pause ? "题间自动暂停: 开" : "题间自动暂停: 关";
+                                text: root.auto-pause ? "自动暂停: 开" : "自动暂停: 关";
                                 clicked => { root.toggle-auto-pause(); }
                             }
                         }
@@ -1002,15 +995,10 @@ export component MainWindow inherits Window {
                         horizontal-stretch: 1;
                         spacing: 3px;
                         Text {
-                            text: "Whisper 硬件转写测速与模型管理";
+                            text: "模型与转写测速";
                             font-size: 16px;
                             font-weight: 700;
                             color: #0f172a;
-                        }
-                        Text {
-                            text: "3:1 建议标准 (3分钟音频1分钟内完成推荐) · 单模型耗时 > 15s (RTF > 1.0) 超时主动熔断";
-                            font-size: 12px;
-                            color: #64748b;
                         }
                     }
 
@@ -1049,7 +1037,7 @@ export component MainWindow inherits Window {
                         RiIcon { icon: Ri.headphone; icon-size: 20px; icon-color: #3b82f6; }
                         Text {
                             horizontal-stretch: 1;
-                            text: "当前版本未内置转写引擎。无需下载模型，配合同名 .limed 缓存即可直接加载字幕。";
+                            text: "当前版本未内置转写引擎，支持直接加载 .limed 缓存。";
                             font-size: 12px;
                             color: #334155;
                             vertical-alignment: center;
@@ -1080,7 +1068,7 @@ export component MainWindow inherits Window {
                                 horizontal-stretch: 1;
                                 spacing: 2px;
                                 Text {
-                                    text: "转写引擎 whisper-cli.exe";
+                                    text: "whisper-cli 转写引擎";
                                     font-size: 12px;
                                     font-weight: 700;
                                     color: #0f172a;

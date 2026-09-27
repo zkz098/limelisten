@@ -244,9 +244,7 @@ fn refresh_whisper_ui(ui: &MainWindow, state: &GuiState) {
         }
         None => {
             ui.set_whisper_installed(false);
-            ui.set_whisper_status(
-                "未安装。转写与测速需要 whisper-cli.exe，可在下方一键下载。".into(),
-            );
+            ui.set_whisper_status("未安装".into());
         }
     }
 }
@@ -342,7 +340,7 @@ fn run_model_download(tx: Sender<Msg>, spec: String) {
         let _ = tx.send(Msg::DownloadProgress {
             spec: spec.clone(),
             progress: 0.02,
-            status_text: format!("正在连接 ({:.1}MB)...", meta.size_bytes as f64 / 1_048_576.0),
+            status_text: "正在连接…".into(),
         });
 
         let spec_for_cb = spec.clone();
@@ -372,9 +370,9 @@ fn run_model_download(tx: Sender<Msg>, spec: String) {
         spec,
         success,
         msg: if success {
-            format!("✅ {} 模型下载成功并已就绪！", meta.name)
+            format!("{} 下载完成", meta.name)
         } else {
-            format!("❌ {} 模型下载失败: {}", meta.name, last_err)
+            format!("{} 下载失败: {}", meta.name, last_err)
         },
     });
 }
@@ -422,7 +420,7 @@ fn run_whisper_download(tx: Sender<Msg>, id: String) {
                 let _ = tx.send(Msg::WhisperDownloadProgress {
                     id: id.clone(),
                     progress: 0.02,
-                    status_text: "下载失败，换备用线路重试…".into(),
+                    status_text: "重试中…".into(),
                 });
             }
         }
@@ -432,7 +430,7 @@ fn run_whisper_download(tx: Sender<Msg>, id: String) {
         let _ = tx.send(Msg::WhisperDownloadDone {
             id,
             success: false,
-            msg: format!("❌ {} 下载失败: {last_err}", meta.name),
+            msg: format!("{} 下载失败: {last_err}", meta.name),
         });
         return;
     }
@@ -440,7 +438,7 @@ fn run_whisper_download(tx: Sender<Msg>, id: String) {
     let _ = tx.send(Msg::WhisperDownloadProgress {
         id: id.clone(),
         progress: 0.99,
-        status_text: "下载完成，正在解压…".into(),
+        status_text: "正在解压…".into(),
     });
 
     let dest = root.join(meta.id);
@@ -453,13 +451,13 @@ fn run_whisper_download(tx: Sender<Msg>, id: String) {
         let _ = tx.send(Msg::WhisperDownloadDone {
             id,
             success: true,
-            msg: format!("✅ {} 引擎下载完成，whisper-cli.exe 已就绪！", meta.name),
+            msg: format!("{} 已就绪", meta.name),
         });
     } else {
         let _ = tx.send(Msg::WhisperDownloadDone {
             id,
             success: false,
-            msg: format!("❌ {} 解压失败: {detail}", meta.name),
+            msg: format!("{} 解压失败: {detail}", meta.name),
         });
     }
 }
@@ -520,13 +518,13 @@ fn extract_whisper_zip(zip: &Path, dest: &Path) -> (bool, String) {
 
 #[cfg(feature = "whisper")]
 fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
-    let _ = tx.send(Msg::Status("正在准备 15 秒测速切片...".into()));
+    let _ = tx.send(Msg::Status("准备测速…".into()));
     let sample_str = audio_path.as_deref().and_then(|p| p.to_str());
     let (test_wav, audio_dur_s) = match crate::cli::prepare_benchmark_wav(sample_str) {
         Ok(res) => res,
         Err(e) => {
             let _ = tx.send(Msg::BenchDone {
-                summary: format!("测速准备失败: {e}"),
+                summary: format!("测速失败: {e}"),
             });
             return;
         }
@@ -536,8 +534,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
         Some(e) => e,
         None => {
             let _ = tx.send(Msg::BenchDone {
-                summary: "未找到 whisper-cli.exe：请先在本窗口上方一键下载转写引擎，再开始测速"
-                    .into(),
+                summary: "未找到 whisper-cli.exe".into(),
             });
             return;
         }
@@ -600,7 +597,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
             Err(e) => {
                 let _ = tx.send(Msg::BenchModelUpdate {
                     spec: meta.spec.into(),
-                    bench_status: format!("❌ 启动失败: {e}"),
+                    bench_status: format!("启动失败: {e}"),
                     is_recommended: false,
                 });
                 continue;
@@ -637,26 +634,20 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
         if timed_out {
             let _ = tx.send(Msg::BenchModelUpdate {
                 spec: meta.spec.into(),
-                bench_status: "❌ 超时熔断(RTF>1.0)".into(),
+                bench_status: "超时".into(),
                 is_recommended: false,
             });
         } else if let Some(e) = child_err {
             let _ = tx.send(Msg::BenchModelUpdate {
                 spec: meta.spec.into(),
-                bench_status: format!("❌ 出错: {e}"),
+                bench_status: format!("错误: {e}"),
                 is_recommended: false,
             });
         } else {
             let elapsed = start.elapsed().as_secs_f64();
             let speedup = audio_dur_s / elapsed;
             let is_rec = speedup >= 3.0;
-            let status = if speedup >= 10.0 {
-                format!("{speedup:.1}x ({elapsed:.2}s) ★★★★★ 极速")
-            } else if is_rec {
-                format!("{speedup:.1}x ({elapsed:.2}s) ✅ 推荐")
-            } else {
-                format!("{speedup:.1}x ({elapsed:.2}s) ⚠️ 较慢")
-            };
+            let status = format!("{speedup:.1}x ({elapsed:.2}s)");
             let _ = tx.send(Msg::BenchModelUpdate {
                 spec: meta.spec.into(),
                 bench_status: status,
@@ -674,11 +665,11 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
     }
 
     let summary = if let Some((name, speedup, true)) = best_model {
-        format!("✅ 最佳推荐模型: {name} (倍速 {speedup:.1}x) · 性能符合 3:1 标准，推荐作为主转写模型")
+        format!("推荐: {name} ({speedup:.1}x)")
     } else if let Some((_name, speedup, false)) = best_model {
-        format!("⚠️ 已测模型最高倍速仅 {speedup:.1}x (低于 3:1 标准)。建议下载 Tiny/Base 规格，或直接配合 .limed 缓存使用。")
+        format!("最高倍速: {speedup:.1}x")
     } else {
-        "未完成有效测速。请检查模型或点击「下载」轻量规格模型后重试。".to_string()
+        "测速未完成".to_string()
     };
 
     let _ = tx.send(Msg::BenchDone { summary });
@@ -687,7 +678,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
 #[cfg(not(feature = "whisper"))]
 fn run_gui_benchmark(tx: Sender<Msg>, _audio_path: Option<PathBuf>) {
     let _ = tx.send(Msg::BenchDone {
-        summary: "当前版本未包含转写引擎，无需测速，可直接打开 .limed 缓存播放音频。".into(),
+        summary: "当前版本未包含转写引擎".into(),
     });
 }
 
@@ -713,7 +704,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     ui.set_show_transcript(state.borrow().show_transcript);
     if is_slim {
         ui.set_app_title("limelisten — 听力播放器 (Slim)".into());
-        ui.set_status("就绪 · 配合同名 .limed 缓存直接加载字幕".into());
+        ui.set_status("就绪".into());
     }
 
     // 启动时刷新媒体库列表、模型列表与转写引擎状态
@@ -771,7 +762,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 }
             }
             if found.is_empty() {
-                ui.set_status("该文件夹内未找到支持的音频文件".into());
+                ui.set_status("未找到音频文件".into());
                 return;
             }
             found.sort();
@@ -797,7 +788,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
             refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
             ui.set_sidebar_tab(1); // 切到媒体库 tab
-            ui.set_status(format!("已扫描导入 {} 个音频文件", found.len()).into());
+            ui.set_status(format!("已导入 {} 个音频", found.len()).into());
 
             if state.borrow().path.is_none() {
                 if let Some(first) = found.into_iter().next() {
@@ -836,14 +827,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         ui.on_analyze(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Some(path) = state.borrow().path.clone() else {
-                ui.set_status("请先打开一个音频文件".into());
+                ui.set_status("未打开音频".into());
                 return;
             };
             spawn_analyze(path, ui_weak.clone(), tx.clone(), state.clone(), store.clone());
         });
     }
 
-    // ---------------- ② 转写字幕 ----------------
+    // ---------------- 转写字幕 ----------------
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
@@ -851,7 +842,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         ui.on_transcribe(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             if cfg!(not(feature = "whisper")) {
-                ui.set_status("当前版本未内置转写引擎，请配合同名 .limed 缓存使用".into());
+                ui.set_status("当前版本未内置转写引擎".into());
                 return;
             }
             let payload = {
@@ -871,11 +862,11 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 }
             };
             let Some((core, busy)) = payload else {
-                ui.set_status("请先切分音频（转写需要语音岛和地标来进行吸附）".into());
+                ui.set_status("请先切分音频".into());
                 return;
             };
             if busy.swap(true, Ordering::SeqCst) {
-                ui.set_status("已有任务在跑…".into());
+                ui.set_status("处理中…".into());
                 return;
             }
             ui.set_transcribe_progress(0.0);
@@ -894,12 +885,12 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                                 let _ = tx2.send(Msg::TranscribeDone(sents));
                             }
                             Err(e) => {
-                                let _ = tx2.send(Msg::Error(format!("转写失败：{e}")));
+                                let _ = tx2.send(Msg::Error(format!("转写失败: {e}")));
                             }
                         }
                     }
                     Err(e) => {
-                        let _ = tx2.send(Msg::Error(format!("解码失败：{e}")));
+                        let _ = tx2.send(Msg::Error(format!("解码失败: {e}")));
                     }
                 }
                 busy.store(false, Ordering::SeqCst);
@@ -907,7 +898,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         });
     }
 
-    // ---------------- ③ 保存为 .limed 预切分转译缓存 ----------------
+    // ---------------- 保存 .limed ----------------
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
@@ -916,17 +907,17 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let (path, info, chapters, sentences) = {
                 let st = state.borrow();
                 let Some(path) = st.path.clone() else {
-                    ui.set_status("请先打开一个音频文件".into());
+                    ui.set_status("未打开音频".into());
                     return;
                 };
                 let Some(core) = st.core.as_ref() else {
-                    ui.set_status("暂无切分或字幕数据可保存".into());
+                    ui.set_status("无可保存数据".into());
                     return;
                 };
                 (path, core.info, core.chapters.clone(), st.sentences.clone())
             };
             if chapters.is_empty() && sentences.is_empty() {
-                ui.set_status("当前尚无章节或字幕内容可保存".into());
+                ui.set_status("无可保存数据".into());
                 return;
             }
             let meta = LimedMeta {
@@ -951,20 +942,16 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let target = path.with_extension("limed");
             match limed.save(&target) {
                 Ok(()) => {
-                    let size_kb = std::fs::metadata(&target)
-                        .map(|m| m.len() as f64 / 1024.0)
-                        .unwrap_or(0.0);
                     ui.set_status(
                         format!(
-                            "✅ 成功保存 .limed 缓存（{:.1} KB）：{}",
-                            size_kb,
+                            "已保存 {}",
                             target.file_name().unwrap_or_default().to_string_lossy()
                         )
                         .into(),
                     );
                 }
                 Err(e) => {
-                    ui.set_status(format!("保存 .limed 失败：{e}").into());
+                    ui.set_status(format!("保存失败: {e}").into());
                 }
             }
         });
@@ -979,16 +966,16 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let need_engine = state.borrow().engine.is_none();
             if need_engine {
                 let Some(path) = state.borrow().path.clone() else {
-                    ui.set_status("请先打开一个音频文件".into());
+                    ui.set_status("未打开音频".into());
                     return;
                 };
                 match Engine::new(&path) {
                     Ok(eng) => {
                         state.borrow_mut().engine = Some(eng);
-                        ui.set_status("播放引擎已就绪".into());
+                        ui.set_status("就绪".into());
                     }
                     Err(e) => {
-                        ui.set_status(format!("建播放流失败：{e}").into());
+                        ui.set_status(format!("播放失败: {e}").into());
                         return;
                     }
                 }
@@ -1077,7 +1064,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 }
             }
             ui.set_status(
-                format!("{} [{title}]", if was_collapsed { "已展开" } else { "已折叠" }).into(),
+                format!("{} [{title}]", if was_collapsed { "展开" } else { "折叠" }).into(),
             );
         });
     }
@@ -1170,9 +1157,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             ui.set_show_transcript(show);
             ui.set_status(
                 if show {
-                    "已显示听力原文"
+                    "显示原文"
                 } else {
-                    "已隐藏听力原文，可随时点「显示原文」恢复"
+                    "隐藏原文"
                 }
                 .into(),
             );
@@ -1245,7 +1232,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 eng.set_loop(s, e, loop_count);
                 eng.set_stop_at(if auto_pause { e } else { 0 });
             }
-            ui.set_status(format!("已手动微调 [{}]：{} – {} (已锁定)", title, crate::cli::fmt_ms(s), crate::cli::fmt_ms(e)).into());
+            ui.set_status(format!("微调 [{}]：{} – {}", title, crate::cli::fmt_ms(s), crate::cli::fmt_ms(e)).into());
         });
     }
 
@@ -1263,7 +1250,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
             let mut st = state.borrow_mut();
             let Some(mid) = st.media_id else {
-                ui.set_status("当前媒体尚未入库，无法拆分".into());
+                ui.set_status("无法拆分".into());
                 return;
             };
             let Some(seq) = st
@@ -1276,18 +1263,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             };
 
             if !store.borrow().split_chapter(mid, seq, pos).unwrap_or(false) {
-                ui.set_status(
-                    format!("光标位置 {} 不在所选章节内部，未拆分", crate::cli::fmt_ms(pos)).into(),
-                );
+                ui.set_status("光标超出章节范围".into());
                 return;
             }
             let Ok(updated) = store.borrow().load_chapters(mid) else {
                 return;
             };
             reload_chapters(&ui, &mut st, updated, seq);
-            ui.set_status(
-                format!("已在 {} 处拆分所选章节（已锁定防覆盖）", crate::cli::fmt_ms(pos)).into(),
-            );
+            ui.set_status(format!("已在 {} 处拆分", crate::cli::fmt_ms(pos)).into());
         });
     }
 
@@ -1304,7 +1287,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
             let mut st = state.borrow_mut();
             let Some(mid) = st.media_id else {
-                ui.set_status("当前媒体尚未入库，无法合并".into());
+                ui.set_status("无法合并".into());
                 return;
             };
             let Some((seq, title)) = st
@@ -1317,14 +1300,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             };
 
             if !store.borrow().merge_next_chapter(mid, seq).unwrap_or(false) {
-                ui.set_status(format!("[{title}] 没有同级的下一节可合并（题不会跨材料吞并）").into());
+                ui.set_status(format!("[{title}] 无下一节可合并").into());
                 return;
             }
             let Ok(updated) = store.borrow().load_chapters(mid) else {
                 return;
             };
             reload_chapters(&ui, &mut st, updated, seq);
-            ui.set_status(format!("已将 [{title}] 与下一节合并（已锁定防覆盖）").into());
+            ui.set_status(format!("已合并 [{title}] 与下一节").into());
         });
     }
 
@@ -1347,7 +1330,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 eng.play();
                 ui.set_playing(true);
                 ui.set_position(start as f32);
-                ui.set_status(format!("试听边界：{} – {}", crate::cli::fmt_ms(start), crate::cli::fmt_ms(end)).into());
+                ui.set_status(format!("试听：{} – {}", crate::cli::fmt_ms(start), crate::cli::fmt_ms(end)).into());
             }
         });
     }
@@ -1360,7 +1343,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let Some(ui) = ui_weak.upgrade() else { return };
             let st = state.borrow();
             if st.sentences.is_empty() {
-                ui.set_status("当前音频尚无字幕，请先完成「② 转写字幕」".into());
+                ui.set_status("无字幕数据".into());
                 return;
             }
             let base_name = st
@@ -1416,8 +1399,8 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             };
 
             match std::fs::write(&save_path, content.as_bytes()) {
-                Ok(_) => ui.set_status(format!("成功导出字幕：{}", save_path.file_name().unwrap_or_default().to_string_lossy()).into()),
-                Err(e) => ui.set_status(format!("导出失败：{e}").into()),
+                Ok(_) => ui.set_status(format!("已导出 {}", save_path.file_name().unwrap_or_default().to_string_lossy()).into()),
+                Err(e) => ui.set_status(format!("导出失败: {e}").into()),
             }
         });
     }
@@ -1451,14 +1434,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let Some(ui) = ui_weak.upgrade() else { return };
             let st = state.borrow();
             if paths::find_whisper_exe().is_none() {
-                ui.set_bench_summary("还没安装 whisper-cli.exe：请先在上方下载任意一个引擎构建版（推荐 OpenBLAS 加速版）。".into());
+                ui.set_bench_summary("未检测到 whisper-cli.exe".into());
                 return;
             }
             if st.is_benchmarking.swap(true, Ordering::SeqCst) {
                 return;
             }
             ui.set_is_benchmarking(true);
-            ui.set_bench_summary("正在测速中...（单模型上限 15 秒，超时自动熔断）".into());
+            ui.set_bench_summary("正在测速…".into());
             let audio_path = st.path.clone();
             let tx = tx.clone();
             std::thread::spawn(move || {
@@ -1476,7 +1459,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let spec = spec_slint.to_string();
             let st = state.borrow();
             if st.is_downloading.swap(true, Ordering::SeqCst) {
-                ui.set_status("当前已有模型正在下载中，请等待其完成".into());
+                ui.set_status("模型下载中…".into());
                 return;
             }
             let tx = tx.clone();
@@ -1496,13 +1479,10 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let id = id_slint.to_string();
             let st = state.borrow();
             if st.is_downloading_cli.swap(true, Ordering::SeqCst) {
-                ui.set_status("当前已有引擎正在下载中，请等待其完成".into());
+                ui.set_status("引擎下载中…".into());
                 return;
             }
-            ui.set_bench_summary(
-                format!("正在下载 whisper-cli（{id}）运行包，完成后自动解压到 tools/whisper/…")
-                    .into(),
-            );
+            ui.set_bench_summary(format!("正在下载 whisper-cli ({id})…").into());
             let tx = tx.clone();
             std::thread::spawn(move || {
                 run_whisper_download(tx, id);
@@ -1564,7 +1544,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         refresh_bench_models_ui(&ui, &st);
                         ui.set_status(msg.into());
                         if success {
-                            ui.set_bench_summary("模型下载已完成！可点击「开始测速」测试该模型性能。".into());
+                            ui.set_bench_summary("模型下载完成".into());
                         }
                     }
                     Msg::WhisperDownloadProgress {
@@ -1587,13 +1567,13 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         refresh_whisper_ui(&ui, &st);
                         ui.set_status(msg.into());
                         if success {
-                            ui.set_bench_summary("whisper-cli 转写引擎已就绪，可直接开始测速。".into());
+                            ui.set_bench_summary("转写引擎已就绪".into());
                         }
                     }
                     Msg::TranscribeDone(sentences) => {
                         ui.set_transcribe_progress(-1.0);
                         ui.set_has_subtitles(true);
-                        ui.set_status(format!("② 转写完成：{} 句字幕", sentences.len()).into());
+                        ui.set_status(format!("转写完成：{} 句", sentences.len()).into());
                         last_sentence.set(usize::MAX);
                         let mut st = state.borrow_mut();
                         if let Some(mid) = st.media_id {
@@ -1623,24 +1603,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         ui.set_has_chapters(!chapters.is_empty());
                         ui.set_duration(core.info.duration_ms as f32);
                         ui.set_chime_info(summary.clone().into());
-                        if cfg!(not(feature = "whisper")) {
-                            ui.set_status(
-                                format!(
-                                    "① 切分完成：{summary}（未内置转写引擎，字幕请配合同名 .limed 使用）"
-                                )
-                                .into(),
-                            );
-                        } else {
-                            ui.set_status(
-                                format!(
-                                    "① 切分完成：{summary} · 语音岛 {} · 间隙 {}（数字静音 {}）",
-                                    core.structure.speech.len(),
-                                    core.structure.gaps.len(),
-                                    if core.structure.has_digital_silence { "有" } else { "无" }
-                                )
-                                .into(),
-                            );
-                        }
+                        ui.set_status(format!("切分完成：{summary}").into());
                         if st.media_id.is_some() {
                             refresh_media_list(&ui, &store.borrow(), &mut st);
                         }
@@ -1688,7 +1651,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                                 eng.set_loop(a, b, st.loop_count);
                                 eng.set_stop_at(b);
                             }
-                            ui.set_status("已暂停到下一题".into());
+                            ui.set_status("已暂停".into());
                         }
                         if let (Some(mid), true) = (st.media_id, cur >= 0) {
                             let _ = store.borrow().bump_stat(mid, (cur + 1) as i64, false);
@@ -1752,7 +1715,7 @@ fn load_or_analyze_media(
         match find_accompanying_audio(&path) {
             Some(audio) => audio,
             None => {
-                ui.set_status("未在同目录下找到对应的音频文件（如 .mp3 / .wav / .m4a）".into());
+                ui.set_status("未找到对应音频文件".into());
                 return;
             }
         }
@@ -1774,7 +1737,7 @@ fn load_or_analyze_media(
     ui.set_position(0.0);
 
     let Ok(info) = lime_audio::probe(&path) else {
-        ui.set_status(format!("无法解析音频：{}", path.display()).into());
+        ui.set_status(format!("解析失败: {}", path.display()).into());
         return;
     };
 
@@ -1856,39 +1819,20 @@ fn load_or_analyze_media(
             ui.set_has_chapters(!chapters.is_empty());
             ui.set_duration(info.duration_ms as f32);
 
-            ui.set_chime_info(
-                format!("来自 .limed 缓存 · {}", chapters_summary(&chapters)).into(),
-            );
+            ui.set_chime_info(chapters_summary(&chapters).into());
 
-            if stale_subtitles {
-                ui.set_status(
-                    format!(
-                        "⚡ 已载入 .limed 章节（{} 节）· 旧字幕由已淘汰的转写参数生成，已丢弃；点「② 转写字幕」重新生成",
-                        chapters.len()
-                    )
-                    .into(),
-                );
-            } else if from_db {
+            if !sents.is_empty() {
                 ui.set_has_subtitles(true);
                 ui.set_status(
                     format!(
-                        "⚡ 已载入 .limed 章节（{} 节）· 字幕取自本地库（.limed 字幕已过期，已忽略）",
-                        chapters.len()
-                    )
-                    .into(),
-                );
-            } else if !sents.is_empty() {
-                ui.set_has_subtitles(true);
-                ui.set_status(
-                    format!(
-                        "⚡ 成功秒开匹配的 .limed 缓存：{} 章节 · {} 句字幕",
+                        "已加载：{} 章节 · {} 句字幕",
                         chapters.len(),
                         sents.len()
                     )
                     .into(),
                 );
             } else {
-                ui.set_status(format!("⚡ 成功秒开匹配的 .limed 缓存：{} 章节", chapters.len()).into());
+                ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
             }
 
             let (saved_pos, saved_ord) = if let Some(mid) = media_id {
@@ -1946,30 +1890,20 @@ fn load_or_analyze_media(
                     ui.set_has_chapters(!chapters.is_empty());
                     ui.set_duration(info.duration_ms as f32);
 
-                    ui.set_chime_info(
-                        format!("已加载本地分析 · {}", chapters_summary(&chapters)).into(),
-                    );
+                    ui.set_chime_info(chapters_summary(&chapters).into());
 
                     if !sents.is_empty() {
                         ui.set_has_subtitles(true);
                         ui.set_status(
                             format!(
-                                "⚡ 秒开就绪：{} 章节 · {} 句字幕",
+                                "已加载：{} 章节 · {} 句字幕",
                                 chapters.len(),
                                 sents.len()
                             )
                             .into(),
                         );
-                    } else if stale_subtitles {
-                        ui.set_status(
-                            format!(
-                                "⚡ 秒开就绪：{} 章节 · 旧字幕由已淘汰的转写参数生成，已清除；点「② 转写字幕」重新生成",
-                                chapters.len()
-                            )
-                            .into(),
-                        );
                     } else {
-                        ui.set_status(format!("⚡ 秒开就绪：{} 章节（待转写字幕）", chapters.len()).into());
+                        ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
                     }
 
                     let (saved_pos, saved_ord) =
@@ -2005,7 +1939,7 @@ fn load_or_analyze_media(
     refresh_media_list(ui, &store.borrow(), &mut state.borrow_mut());
 
     if !cache_hit {
-        ui.set_status(format!("已选择 {} · 正在切分…", filename).into());
+        ui.set_status(format!("正在切分：{filename}").into());
         spawn_analyze(path, ui.as_weak(), tx.clone(), state.clone(), store.clone());
     }
 }
@@ -2064,12 +1998,12 @@ fn spawn_analyze(
     let busy = state.borrow().busy.clone();
     if busy.swap(true, Ordering::SeqCst) {
         if let Some(ui) = ui_weak.upgrade() {
-            ui.set_status("已有任务在跑…".into());
+            ui.set_status("处理中…".into());
         }
         return;
     }
     if let Some(ui) = ui_weak.upgrade() {
-        ui.set_status("① 切分中：正在分析音频结构…".into());
+        ui.set_status("正在切分…".into());
     }
     std::thread::spawn(move || {
         let tx2 = tx.clone();
@@ -2343,8 +2277,8 @@ fn fmt_lrc_time(ms: u64) -> String {
 pub fn tool_info() -> String {
     match (paths::find_whisper_exe(), paths::default_model()) {
         (Some(e), Some(m)) => format!("whisper: {}\nmodel:   {}", e.display(), m.display()),
-        (None, _) => "whisper-cli.exe 未找到（可在「测速与模型」里一键下载，或放入 tools/whisper/<cuda|blas>/Release/）".into(),
-        (_, None) => "ggml 模型未找到（应放在 models/）".into(),
+        (None, _) => "未找到 whisper-cli.exe".into(),
+        (_, None) => "未找到 ggml 模型".into(),
     }
 }
 

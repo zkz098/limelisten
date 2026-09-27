@@ -170,7 +170,7 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
         spec: "turbo",
         name: "Large-v3-Turbo",
         filename: "ggml-large-v3-turbo.bin",
-        desc: "高精度首选，复杂杂音及考试真题推荐 (~547MB)",
+        desc: "高精度",
         approx_size_mb: 547,
         size_bytes: 574_041_195,
         primary_url: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
@@ -180,7 +180,7 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
         spec: "small",
         name: "Small",
         filename: "ggml-small.bin",
-        desc: "速度与精度均衡，中端硬件适用 (~466MB)",
+        desc: "均衡",
         approx_size_mb: 466,
         size_bytes: 487_614_201,
         primary_url: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-small.bin",
@@ -190,7 +190,7 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
         spec: "base",
         name: "Base",
         filename: "ggml-base.bin",
-        desc: "极速轻量，轻薄本与普通核显流畅运行 (~142MB)",
+        desc: "轻量",
         approx_size_mb: 142,
         size_bytes: 147_964_211,
         primary_url: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-base.bin",
@@ -200,7 +200,7 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
         spec: "tiny",
         name: "Tiny",
         filename: "ggml-tiny.bin",
-        desc: "极轻超快，极低算力与内存要求 (~75MB)",
+        desc: "极轻",
         approx_size_mb: 75,
         size_bytes: 77_691_713,
         primary_url: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-tiny.bin",
@@ -240,7 +240,7 @@ pub const WHISPER_BUILDS: &[WhisperBuildMeta] = &[
     WhisperBuildMeta {
         id: "cpu",
         name: "CPU 通用版",
-        desc: "纯 CPU 运行，任何机器都能用",
+        desc: "纯 CPU",
         asset: "whisper-bin-x64.zip",
         size_bytes: 7_982_101,
         urls: &[
@@ -251,7 +251,7 @@ pub const WHISPER_BUILDS: &[WhisperBuildMeta] = &[
     WhisperBuildMeta {
         id: "blas",
         name: "OpenBLAS 加速版",
-        desc: "CPU + OpenBLAS，速度更稳（推荐）",
+        desc: "OpenBLAS 加速",
         asset: "whisper-blas-bin-x64.zip",
         size_bytes: 20_769_031,
         urls: &[
@@ -262,7 +262,7 @@ pub const WHISPER_BUILDS: &[WhisperBuildMeta] = &[
     WhisperBuildMeta {
         id: "cublas12.4",
         name: "NVIDIA CUDA 12.4 版",
-        desc: "N 卡加速，需已安装 NVIDIA 驱动",
+        desc: "CUDA 加速",
         asset: "whisper-cublas-12.4.0-bin-x64.zip",
         size_bytes: 677_887_125,
         urls: &[
