@@ -516,7 +516,6 @@ fn extract_whisper_zip(zip: &Path, dest: &Path) -> (bool, String) {
     }
 }
 
-#[cfg(feature = "whisper")]
 fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
     let _ = tx.send(Msg::Status("准备测速…".into()));
     let sample_str = audio_path.as_deref().and_then(|p| p.to_str());
@@ -675,13 +674,6 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
     let _ = tx.send(Msg::BenchDone { summary });
 }
 
-#[cfg(not(feature = "whisper"))]
-fn run_gui_benchmark(tx: Sender<Msg>, _audio_path: Option<PathBuf>) {
-    let _ = tx.send(Msg::BenchDone {
-        summary: "当前版本未包含转写引擎".into(),
-    });
-}
-
 pub fn run() -> anyhow::Result<()> {
     run_with(None)
 }
@@ -699,13 +691,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     let (tx, rx): (Sender<Msg>, Receiver<Msg>) = unbounded();
     let last_sentence = Rc::new(Cell::new(usize::MAX));
 
-    let is_slim = cfg!(not(feature = "whisper"));
-    ui.set_is_slim(is_slim);
     ui.set_show_transcript(state.borrow().show_transcript);
-    if is_slim {
-        ui.set_app_title("limelisten — 听力播放器 (Slim)".into());
-        ui.set_status("就绪".into());
-    }
 
     // 启动时刷新媒体库列表、模型列表与转写引擎状态
     refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
@@ -841,10 +827,6 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let tx = tx.clone();
         ui.on_transcribe(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            if cfg!(not(feature = "whisper")) {
-                ui.set_status("当前版本未内置转写引擎".into());
-                return;
-            }
             let payload = {
                 let st = state.borrow();
                 match st.core.as_ref() {
@@ -1785,7 +1767,7 @@ fn load_or_analyze_media(
             // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化
             let fresh = canonical_chapters(&limed.chapters);
             // 字幕要过转写指纹：旧解码参数（如 -mc -1 的重复幻觉）产生的字幕不再展示；
-            // 章节照常可用（Slim 版没有引擎 = 不校验）
+            // 章节照常可用
             let limed_stale = subtitle_cache_stale(Some(limed.meta.asr_fp.as_str()), false);
             // 旧 `.limed` 字幕失效时，优先用 SQLite 里已用新管线转写好的字幕：
             // 否则用户重新转写后，一重开文件又会被过期的 `.limed` 盖住。
@@ -1948,7 +1930,6 @@ fn load_or_analyze_media(
 ///
 /// - `full = true`：本机 SQLite 缓存，比对完整指纹（解码参数 + 语言 + 模型）；
 /// - `full = false`：可拷贝分享的 `.limed`，只比对解码参数 + 语言，换机器/换模型播放不失效；
-/// - 当前构建没有转写引擎（Slim 纯听版）→ 不校验，直接用缓存字幕；
 /// - 缓存里没指纹（老文件 / 外部工具生成）→ 视为过期：那些正是 `-mc -1` 时代
 ///   整句重复幻觉字幕的载体。
 fn subtitle_cache_stale(cached_fp: Option<&str>, full: bool) -> bool {
@@ -2371,13 +2352,10 @@ mod tests {
     }
 
     /// 字幕缓存指纹：老缓存（无指纹）必须失效；SQLite 连模型一起校验；
-    /// `.limed` 只比解码参数（换机器/换模型播放不失效）；Slim 版不校验。
+    /// `.limed` 只比解码参数（换机器/换模型播放不失效）。
     #[test]
     fn stale_subtitle_cache_detection() {
-        // Slim 版没有转写引擎 → 不校验（否则瘦身包没字幕可放）
-        let Some(full) = crate::cli::asr_fingerprint() else {
-            return;
-        };
+        let full = crate::cli::asr_fingerprint().unwrap();
         let params = crate::cli::asr_params_fingerprint().unwrap();
 
         // 无指纹 = `-mc -1` 时代的老缓存 → 失效

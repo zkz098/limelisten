@@ -182,7 +182,6 @@ export component MainWindow inherits Window {
     // 听力原文（逐词字幕）是否可见：关掉即「盲听模式」，NEXT 预览也一起遮蔽
     in-out property <bool> show-transcript: true;
     in-out property <bool> has-chapters: false;
-    in-out property <bool> is-slim: false;
     in-out property <string> chime-info: "";
     in-out property <string> underruns: "";
     in-out property <string> current-track-title: "未选择音频";
@@ -271,7 +270,7 @@ export component MainWindow inherits Window {
 
                     Text {
                         horizontal-stretch: 0;
-                        text: root.is-slim ? "limelisten (Slim)" : "limelisten";
+                        text: "limelisten";
                         color: #0f172a;
                         font-size: 16px;
                         font-weight: 800;
@@ -303,9 +302,8 @@ export component MainWindow inherits Window {
 
                 RiButton {
                     icon: Ri.captions;
-                    text: root.is-slim ? "转写字幕" : (root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕");
+                    text: root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕";
                     primary: root.transcribe-progress >= 0;
-                    enabled: !root.is-slim;
                     clicked => { root.transcribe(); }
                 }
 
@@ -1030,30 +1028,8 @@ export component MainWindow inherits Window {
 
                 Rectangle { height: 1px; background: #f1f5f9; }
 
-                if root.is-slim : Rectangle {
-                    background: #f8fafc;
-                    border-radius: 8px;
-                    border-width: 1px;
-                    border-color: #e2e8f0;
-                    height: 56px;
-                    HorizontalLayout {
-                        padding-left: 12px;
-                        padding-right: 12px;
-                        spacing: 10px;
-                        alignment: center;
-                        RiIcon { icon: Ri.headphone; icon-size: 20px; icon-color: #3b82f6; }
-                        Text {
-                            horizontal-stretch: 1;
-                            text: "当前版本未内置转写引擎，支持直接加载 .limed 缓存。";
-                            font-size: 12px;
-                            color: #334155;
-                            vertical-alignment: center;
-                        }
-                    }
-                }
-
                 // 转写引擎（whisper-cli.exe）：软件内一键下载
-                if !root.is-slim : Rectangle {
+                Rectangle {
                     background: root.whisper-installed ? #f0fdf4 : #fff7ed;
                     border-radius: 8px;
                     border-width: 1px;
@@ -1337,7 +1313,7 @@ export component MainWindow inherits Window {
                         primary: true;
                         icon: Ri.play;
                         text: root.is-benchmarking ? "测速中..." : "开始测速";
-                        enabled: !root.is-benchmarking && !root.is-slim;
+                        enabled: !root.is-benchmarking;
                         clicked => { root.start-bench(); }
                     }
 

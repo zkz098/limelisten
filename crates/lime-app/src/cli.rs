@@ -1,23 +1,18 @@
 //! 命令行模式：切分、断言、转写、引擎自测。GUI 与 CLI 共用同一套分析函数。
 
-#[cfg(feature = "whisper")]
 use crate::paths;
 use anyhow::{anyhow, Result};
 use lime_analyze::{
     build_chapters, detect_chimes, detect_structure, energy_envelope,
     AnalyzeParams, Chime, GapKind, Structure,
 };
-#[cfg(feature = "whisper")]
 use lime_asr::{group_sentences, WhisperCli};
-#[cfg(feature = "whisper")]
 use lime_audio::{render::write_wav, resample::LinearResampler};
 use lime_audio::AudioInfo;
 use lime_core::{Chapter, ChapterLevel, LimedFile, LimedMeta, Sentence, Word};
 use lime_store::Store;
 use std::path::{Path, PathBuf};
-#[cfg(feature = "whisper")]
 use std::sync::atomic::AtomicBool;
-#[cfg(feature = "whisper")]
 use std::sync::Arc;
 
 /// 一次完整分析的结果（切分部分，不含 ASR）
@@ -71,9 +66,7 @@ pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCo
 /// 当前转写管线的指纹（模型 + 解码参数 + 语言）。
 ///
 /// 用途：`.limed` 与 SQLite 里的旧字幕缓存要按它判有效——参数一变就不再展示旧文本
-/// （例如 `-mc -1` 时代那些整句重复的幻觉字幕）。Slim 纯听版没有转写引擎，返回 `None`，
-/// 此时不校验缓存（否则 Slim 版将无字幕可放）。
-#[cfg(feature = "whisper")]
+/// （例如 `-mc -1` 时代那些整句重复的幻觉字幕）。
 pub fn asr_fingerprint() -> Option<String> {
     let model = paths::default_model();
     Some(lime_asr::pipeline_fingerprint(
@@ -82,38 +75,20 @@ pub fn asr_fingerprint() -> Option<String> {
     ))
 }
 
-#[cfg(not(feature = "whisper"))]
-pub fn asr_fingerprint() -> Option<String> {
-    None
-}
-
 /// 只含解码参数 + 语言的指纹：`.limed` 这类可拷贝分享的缓存按它判有效，
 /// 换机器/换模型播放不会失效。
-#[cfg(feature = "whisper")]
 pub fn asr_params_fingerprint() -> Option<String> {
     Some(lime_asr::pipeline_params_fingerprint(lime_asr::DEFAULT_LANGUAGE))
 }
 
-#[cfg(not(feature = "whisper"))]
-pub fn asr_params_fingerprint() -> Option<String> {
-    None
-}
-
 /// 转写所用模型的名字（落库展示用）。
-#[cfg(feature = "whisper")]
 pub fn asr_model_label() -> String {
     paths::default_model()
         .and_then(|p| p.file_name().map(|n| n.to_string_lossy().to_string()))
         .unwrap_or_else(|| "whisper".into())
 }
 
-#[cfg(not(feature = "whisper"))]
-pub fn asr_model_label() -> String {
-    "whisper".into()
-}
-
 /// 把已解码的单声道样本写成 16 kHz wav（Whisper 要求）。
-#[cfg(feature = "whisper")]
 pub fn dump_16k_wav(mono: &[f32], src_rate: u32, out: &Path) -> Result<()> {
     let target = 16_000u32;
     let samples: Vec<f32> = if src_rate == target {
@@ -152,7 +127,6 @@ pub struct Transcript {
     pub landmarks: Vec<(u64, u64)>,
 }
 
-#[cfg(feature = "whisper")]
 pub fn transcribe(
     core: &AnalysisCore,
     mono: &[f32],
@@ -211,15 +185,6 @@ pub fn transcribe(
         .collect();
 
     Ok(Transcript { raw_words, words, sentences, landmarks })
-}
-
-#[cfg(not(feature = "whisper"))]
-pub fn transcribe(
-    _core: &AnalysisCore,
-    _mono: &[f32],
-    _progress: impl FnMut(&str, f32),
-) -> Result<Transcript> {
-    Err(anyhow!("当前为 Slim 纯听版本（未包含 Whisper 引擎）。请使用完整版预生成 .limed 缓存文件。"))
 }
 
 /// 把句子归属到“题”级章节（没有题级则归属材料级）
@@ -413,13 +378,7 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
     AssertReport { pass, lines }
 }
 
-#[cfg(not(feature = "whisper"))]
-pub fn cmd_transcribe(_file: &str, _show: usize) -> Result<()> {
-    Err(anyhow!("当前为 Slim 纯听版（未编译 Whisper 引擎）。请使用完整版进行转写，或使用 --show-limed 查看 .limed 文件。"))
-}
-
 /// 只跑 ASR 链路（不启 GUI）：打印前 N 句 + 吸附前后对比
-#[cfg(feature = "whisper")]
 pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
     let core = analyze(Path::new(file), |m| eprintln!("[analysis] {m}"))?;
     // 重新解码取单声道样本（避免 analyze 返回值过大）
@@ -628,7 +587,6 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
     let core = analyze(path, |m| println!("  [切分] {m}"))?;
     let (mono, _) = analyze_mono(path)?;
 
-    #[cfg(feature = "whisper")]
     let sentences = {
         println!("  正在执行 Whisper 逐词转写与时间戳吸附...");
         let tr = transcribe(&core, &mono, |m, p| {
@@ -637,12 +595,6 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         let mut sents = tr.sentences;
         assign_sentences_to_chapters(&mut sents, &core.chapters);
         sents
-    };
-    #[cfg(not(feature = "whisper"))]
-    let sentences = {
-        let _ = mono;
-        println!("  [提示] 当前为 Slim 版本，跳过 Whisper 转译，仅打包切分章节信息。");
-        Vec::new()
     };
 
     let meta = LimedMeta {
@@ -702,7 +654,7 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
     println!("  生成工具: {}", limed.meta.generator);
     // 字幕有效性：与当前转写管线不一致时，打开音频时字会被丢弃（章节保留）
     let fp_state = match asr_params_fingerprint() {
-        None => "（Slim 版不校验）".to_string(),
+        None => "（未检测到转写指纹）".to_string(),
         Some(cur) if limed.meta.asr_fp == cur => "✓ 与当前转写参数一致".to_string(),
         Some(_) if limed.meta.asr_fp.is_empty() => "✗ 旧格式/无指纹（字幕会失效，需重新转写）".to_string(),
         Some(_) => "✗ 与当前转写参数不一致（字幕会失效，需重新转写）".to_string(),
@@ -723,15 +675,6 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(feature = "whisper"))]
-pub fn cmd_benchmark(_sample_path: Option<&str>) -> Result<()> {
-    println!("当前运行的是 Slim 纯听版（已裁剪 Whisper 引擎）。");
-    println!("Slim 版无需在本地运行模型转写，可直接消费全功能版生成的 .limed 缓存。");
-    println!("如需评测机器的 Whisper 转写性能，请使用全功能版运行 `limelisten --bench`。");
-    Ok(())
-}
-
-#[cfg(feature = "whisper")]
 #[derive(Debug)]
 enum BenchResult {
     Success { elapsed: f64, speedup: f64 },
@@ -740,7 +683,6 @@ enum BenchResult {
     Error(String),
 }
 
-#[cfg(feature = "whisper")]
 pub fn prepare_benchmark_wav(sample_path: Option<&str>) -> Result<(PathBuf, f64)> {
     let cache_dir = paths::data_dir().join("cache");
     let _ = std::fs::create_dir_all(&cache_dir);
@@ -797,7 +739,6 @@ pub fn prepare_benchmark_wav(sample_path: Option<&str>) -> Result<(PathBuf, f64)
     Ok((bench_wav, actual_dur_s))
 }
 
-#[cfg(feature = "whisper")]
 pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
     println!("============================= Whisper 转写性能测速 (3:1 标准) =============================");
     println!("正在准备 15 秒基准测试音频...");
@@ -998,10 +939,10 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         );
     } else if best_speedup > 0.0 {
         println!("👉 本机测得的最高倍速仅为 {best_speedup:.1}x（未达到 3:1 标准要求）。");
-        println!("   建议：由于转写耗时较长，建议使用更轻量的 base/tiny 模型，或使用 Slim 纯听版配合预生成的 .limed 缓存文件。");
+        println!("   建议：由于转写耗时较长，建议使用更轻量的 base/tiny 模型，或配合预生成的 .limed 缓存文件。");
     } else {
         println!("👉 未检测到可正常运行的模型，或当前环境速度过慢已全部熔断。");
-        println!("   建议使用 Slim 纯听版 (`limelisten-slim.exe`)，直接免转译加载 .limed 缓存。");
+        println!("   建议：请检查模型文件与运行环境，或直接加载 .limed 缓存。");
     }
     println!("========================================================================================\n");
     Ok(())

@@ -8,15 +8,11 @@ build = "build.rs"
 name = "limelisten"
 path = "src/main.rs"
 
-[features]
-default = ["whisper"]
-whisper = ["dep:lime-asr"]
-
 [dependencies]
 lime-core = { path = "../lime-core" }
 lime-audio = { path = "../lime-audio" }
 lime-analyze = { path = "../lime-analyze" }
-lime-asr = { path = "../lime-asr", optional = true }
+lime-asr = { path = "../lime-asr" }
 lime-store = { path = "../lime-store" }
 slint.workspace = true
 anyhow.workspace = true
