@@ -33,6 +33,8 @@ global Ri {
     out property <string> eye-off: "\u{ecb7}";
     out property <string> arrow-down-s: "\u{ea4e}";
     out property <string> arrow-right-s: "\u{ea6e}";
+    out property <string> close: "\u{eb99}";
+    out property <string> download: "\u{ec5a}";
 }
 
 component RiButton inherits Rectangle {
@@ -484,13 +486,10 @@ export component MainWindow inherits Window {
                                             border-radius: 4px;
                                             background: arrow-touch.has-hover ? #e2e8f0 : transparent;
 
-                                            Text {
-                                                text: row.collapsed ? Ri.arrow-right-s : Ri.arrow-down-s;
-                                                font-family: "remixicon";
-                                                color: #475569;
-                                                font-size: 14px;
-                                                horizontal-alignment: center;
-                                                vertical-alignment: center;
+                                            RiIcon {
+                                                icon: row.collapsed ? Ri.arrow-right-s : Ri.arrow-down-s;
+                                                icon-size: 14px;
+                                                icon-color: #475569;
                                             }
                                             arrow-touch := TouchArea {
                                                 mouse-cursor: pointer;
@@ -654,11 +653,21 @@ export component MainWindow inherits Window {
                                             horizontal-stretch: 1;
                                             overflow: elide;
                                         }
-                                        Text {
-                                            text: m.is-analyzed ? "✓ 已缓存" : "待切分";
-                                            color: m.is-analyzed ? #15803d : #94a3b8;
-                                            font-size: 10px;
-                                            font-weight: 600;
+                                        HorizontalLayout {
+                                            spacing: 3px;
+                                            alignment: center;
+                                            if m.is-analyzed : RiIcon {
+                                                icon: Ri.check;
+                                                icon-size: 11px;
+                                                icon-color: #15803d;
+                                            }
+                                            Text {
+                                                text: m.is-analyzed ? "已缓存" : "待切分";
+                                                color: m.is-analyzed ? #15803d : #94a3b8;
+                                                font-size: 10px;
+                                                font-weight: 600;
+                                                vertical-alignment: center;
+                                            }
                                         }
                                     }
 
@@ -1007,12 +1016,10 @@ export component MainWindow inherits Window {
                         height: 28px;
                         border-radius: 14px;
                         background: close-touch.has-hover ? #f1f5f9 : transparent;
-                        Text {
-                            text: "✕";
-                            font-size: 15px;
-                            color: #64748b;
-                            horizontal-alignment: center;
-                            vertical-alignment: center;
+                        RiIcon {
+                            icon: Ri.close;
+                            icon-size: 16px;
+                            icon-color: close-touch.has-hover ? #0f172a : #64748b;
                         }
                         close-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -1157,7 +1164,7 @@ export component MainWindow inherits Window {
                                 }
 
                                 if !b.installed && !b.downloading : RiButton {
-                                    icon: Ri.add;
+                                    icon: Ri.download;
                                     text: "下载";
                                     btn-height: 24px;
                                     clicked => { root.download-whisper(b.id); }
@@ -1229,6 +1236,12 @@ export component MainWindow inherits Window {
                                         padding-left: 8px;
                                         padding-right: 8px;
                                         alignment: center;
+                                        spacing: 4px;
+                                        if row.is-recommended : RiIcon {
+                                            icon: Ri.check;
+                                            icon-size: 13px;
+                                            icon-color: #15803d;
+                                        }
                                         Text {
                                             text: row.bench-status;
                                             font-size: 11px;
@@ -1243,7 +1256,7 @@ export component MainWindow inherits Window {
                                 // 下载或就绪状态按钮
                                 if !row.installed && !row.downloading : RiButton {
                                     text: "下载 (" + row.file-size + ")";
-                                    icon: Ri.add;
+                                    icon: Ri.download;
                                     btn-height: 28px;
                                     clicked => { root.download-model(row.spec); }
                                 }
@@ -1329,6 +1342,7 @@ export component MainWindow inherits Window {
                     }
 
                     RiButton {
+                        icon: Ri.close;
                         text: "关闭";
                         clicked => { root.close-bench-modal(); }
                     }
