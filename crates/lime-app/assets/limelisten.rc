@@ -39,6 +39,7 @@ BEGIN
       VALUE "OriginalFilename", "limelisten.exe"
       VALUE "ProductName", "limelisten"
       VALUE "ProductVersion", VER_STR
+      VALUE "LegalCopyright", "GPL-3.0-or-later"
     END
   END
   BLOCK "VarFileInfo"

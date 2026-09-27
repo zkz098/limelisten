@@ -692,6 +692,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     let last_sentence = Rc::new(Cell::new(usize::MAX));
 
     ui.set_show_transcript(state.borrow().show_transcript);
+    ui.set_app_version(env!("CARGO_PKG_VERSION").into());
+    ui.set_github_url("https://github.com/zkz098/limelisten".into());
+    ui.set_license_name("GPL-3.0-or-later".into());
 
     // 启动时刷新媒体库列表、模型列表与转写引擎状态
     refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
@@ -1469,6 +1472,29 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             std::thread::spawn(move || {
                 run_whisper_download(tx, id);
             });
+        });
+    }
+
+    // ---------------- 关于模态框与外部链接 ----------------
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_open_about_modal(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_show_about_modal(true);
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_close_about_modal(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_show_about_modal(false);
+        });
+    }
+
+    {
+        ui.on_open_url(move |url| {
+            open_url_in_browser(url.as_str());
         });
     }
 
@@ -2260,6 +2286,33 @@ pub fn tool_info() -> String {
         (Some(e), Some(m)) => format!("whisper: {}\nmodel:   {}", e.display(), m.display()),
         (None, _) => "未找到 whisper-cli.exe".into(),
         (_, None) => "未找到 ggml 模型".into(),
+    }
+}
+
+/// 在系统默认浏览器中打开指定 URL
+pub fn open_url_in_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        if std::process::Command::new("rundll32")
+            .args(["url.dll,FileProtocolHandler", url])
+            .spawn()
+            .is_err()
+        {
+            use std::os::windows::process::CommandExt;
+            const CREATE_NO_WINDOW: u32 = 0x08000000;
+            let _ = std::process::Command::new("cmd")
+                .args(["/c", "start", "", url])
+                .creation_flags(CREATE_NO_WINDOW)
+                .spawn();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
     }
 }
 

@@ -35,6 +35,9 @@ global Ri {
     out property <string> arrow-right-s: "\u{ea6e}";
     out property <string> close: "\u{eb99}";
     out property <string> download: "\u{ec5a}";
+    out property <string> info: "\u{ee59}";
+    out property <string> github: "\u{edca}";
+    out property <string> external-link: "\u{ecaf}";
 }
 
 component RiButton inherits Rectangle {
@@ -197,6 +200,12 @@ export component MainWindow inherits Window {
     in-out property <string> whisper-status: "";
     in-out property <[WhisperBuildRow]> whisper-builds: [];
 
+    // ---- 关于模态框 ----
+    in-out property <bool> show-about-modal: false;
+    in-out property <string> app-version: "0.1.0";
+    in-out property <string> github-url: "https://github.com/zkz098/limelisten";
+    in-out property <string> license-name: "GPL-3.0-or-later";
+
     // ---- 回调命令 ----
     callback open-file();
     callback open-folder();
@@ -224,6 +233,11 @@ export component MainWindow inherits Window {
     callback start-bench();
     callback download-model(string);
     callback download-whisper(string);
+
+    // 关于与外部链接命令
+    callback open-about-modal();
+    callback close-about-modal();
+    callback open-url(string);
 
     // 材料折叠 / 展开
     callback toggle-chapter-collapse(int);
@@ -344,6 +358,12 @@ export component MainWindow inherits Window {
                     icon: Ri.speed;
                     text: "测速与模型";
                     clicked => { root.open-bench-modal(); }
+                }
+
+                RiButton {
+                    icon: Ri.info;
+                    text: "关于";
+                    clicked => { root.open-about-modal(); }
                 }
 
                 // 状态文本
@@ -1321,6 +1341,270 @@ export component MainWindow inherits Window {
                         icon: Ri.close;
                         text: "关闭";
                         clicked => { root.close-bench-modal(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================= 关于模态框 =================
+    if root.show-about-modal : Rectangle {
+        width: 100%;
+        height: 100%;
+        background: #0f172a66;
+
+        TouchArea {
+            // 点击半透明背景关闭
+            clicked => { root.close-about-modal(); }
+        }
+
+        Rectangle {
+            width: 580px;
+            height: about-modal-content.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: max(0px, (parent.height - self.height) / 2);
+            background: #ffffff;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #cbd5e1;
+            clip: true;
+
+            TouchArea {
+                // 拦截内部穿透点击
+            }
+
+            about-modal-content := VerticalLayout {
+                padding: 24px;
+                spacing: 16px;
+
+                // 标题栏：Logo、软件名称、版本与关闭按钮
+                HorizontalLayout {
+                    spacing: 14px;
+                    alignment: start;
+
+                    Image {
+                        source: @image-url("assets/logo.png");
+                        width: 48px;
+                        height: 48px;
+                        image-fit: contain;
+                    }
+
+                    VerticalLayout {
+                        horizontal-stretch: 1;
+                        spacing: 4px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+
+                            Text {
+                                text: "limelisten";
+                                font-size: 20px;
+                                font-weight: 800;
+                                color: #0f172a;
+                            }
+
+                            Rectangle {
+                                border-radius: 4px;
+                                background: #dbeafe;
+                                height: 20px;
+                                HorizontalLayout {
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    alignment: center;
+                                    Text {
+                                        text: "v" + root.app-version;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: #1d4ed8;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "专为外语精听与听力训练打造的本地音频播放器";
+                            font-size: 12px;
+                            color: #64748b;
+                        }
+                    }
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: about-close-touch.has-hover ? #f1f5f9 : transparent;
+                        RiIcon {
+                            icon: Ri.close;
+                            icon-size: 16px;
+                            icon-color: about-close-touch.has-hover ? #0f172a : #64748b;
+                        }
+                        about-close-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.close-about-modal(); }
+                        }
+                    }
+                }
+
+                Rectangle { height: 1px; background: #f1f5f9; }
+
+                // GitHub 仓库卡片
+                Rectangle {
+                    background: #f8fafc;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #e2e8f0;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+
+                            RiIcon {
+                                icon: Ri.github;
+                                icon-size: 18px;
+                                icon-color: #0f172a;
+                            }
+
+                            Text {
+                                text: "GitHub 开源仓库";
+                                font-size: 13px;
+                                font-weight: 700;
+                                color: #0f172a;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            alignment: center;
+
+                            Rectangle {
+                                horizontal-stretch: 1;
+                                height: 32px;
+                                background: #ffffff;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                border-color: #cbd5e1;
+
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    Text {
+                                        text: root.github-url;
+                                        font-size: 12px;
+                                        color: #2563eb;
+                                        font-weight: 600;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+                                }
+                            }
+
+                            RiButton {
+                                icon: Ri.external-link;
+                                text: "访问仓库";
+                                primary: true;
+                                btn-height: 32px;
+                                clicked => { root.open-url(root.github-url); }
+                            }
+                        }
+                    }
+                }
+
+                // 开源协议卡片
+                Rectangle {
+                    background: #f8fafc;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #e2e8f0;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+
+                            RiIcon {
+                                icon: Ri.file-sub;
+                                icon-size: 18px;
+                                icon-color: #15803d;
+                            }
+
+                            Text {
+                                text: "开源许可证";
+                                font-size: 13px;
+                                font-weight: 700;
+                                color: #0f172a;
+                            }
+
+                            Rectangle {
+                                border-radius: 4px;
+                                background: #dcfce7;
+                                height: 20px;
+                                HorizontalLayout {
+                                    padding-left: 6px;
+                                    padding-right: 6px;
+                                    alignment: center;
+                                    Text {
+                                        text: root.license-name;
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: #15803d;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            text: "GNU General Public License v3.0 or later (GPL-3.0-or-later)";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: #334155;
+                        }
+
+                        Text {
+                            text: "limelisten 是一款自由与开源软件（Free and Open Source Software）。根据 GNU GPL-3.0-or-later 协议：\n\n• 您可以自由运行、研究、修改与分发本软件；\n• 任何修改或基于本软件二次开发的作品必须同样以 GPL-3.0-or-later 协议开源并提供完整源代码；\n• 本软件按「原样」提供，没有任何明示或暗示的担保。";
+                            font-size: 11px;
+                            color: #64748b;
+                            wrap: word-wrap;
+                        }
+
+                        HorizontalLayout {
+                            alignment: end;
+                            RiButton {
+                                icon: Ri.external-link;
+                                text: "查看 GPLv3 许可证正文";
+                                btn-height: 28px;
+                                clicked => { root.open-url("https://www.gnu.org/licenses/gpl-3.0.html"); }
+                            }
+                        }
+                    }
+                }
+
+                // 底部说明与确定按钮
+                HorizontalLayout {
+                    spacing: 12px;
+                    cross-axis-alignment: center;
+
+                    Text {
+                        horizontal-stretch: 1;
+                        text: "基于 Rust + Slint · 纯本地运行 · 保护隐私";
+                        font-size: 11px;
+                        color: #94a3b8;
+                        vertical-alignment: center;
+                    }
+
+                    RiButton {
+                        text: "确定";
+                        btn-height: 32px;
+                        clicked => { root.close-about-modal(); }
                     }
                 }
             }
