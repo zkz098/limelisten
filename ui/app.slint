@@ -56,6 +56,8 @@ component RiButton inherits Rectangle {
     border-color: root.primary ? transparent : (touch.has-hover ? #94a3b8 : #cbd5e1);
     height: root.btn-height;
 
+    animate background, border-color { duration: 150ms; easing: ease-out; }
+
     HorizontalLayout {
         padding-left: 10px;
         padding-right: 10px;
@@ -97,6 +99,51 @@ component RiIcon inherits Text {
     font-size: root.icon-size;
     vertical-alignment: center;
     horizontal-alignment: center;
+}
+
+component AudioVisualizer inherits HorizontalLayout {
+    in property <bool> playing: false;
+    spacing: 2px;
+    alignment: center;
+    width: 18px;
+    height: 16px;
+
+    Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: root.playing ? #2563eb : #94a3b8;
+        y: (parent.height - self.height) / 2;
+        height: root.playing ? (4px + abs(sin(animation-tick() / 0.35s * 360deg)) * 10px) : 4px;
+        animate height { duration: 60ms; }
+        animate background { duration: 150ms; }
+    }
+    Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: root.playing ? #3b82f6 : #94a3b8;
+        y: (parent.height - self.height) / 2;
+        height: root.playing ? (4px + abs(sin((animation-tick() + 120ms) / 0.28s * 360deg)) * 11px) : 6px;
+        animate height { duration: 60ms; }
+        animate background { duration: 150ms; }
+    }
+    Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: root.playing ? #60a5fa : #94a3b8;
+        y: (parent.height - self.height) / 2;
+        height: root.playing ? (4px + abs(sin((animation-tick() + 240ms) / 0.42s * 360deg)) * 9px) : 4px;
+        animate height { duration: 60ms; }
+        animate background { duration: 150ms; }
+    }
+    Rectangle {
+        width: 3px;
+        border-radius: 1.5px;
+        background: root.playing ? #2563eb : #94a3b8;
+        y: (parent.height - self.height) / 2;
+        height: root.playing ? (4px + abs(sin((animation-tick() + 60ms) / 0.31s * 360deg)) * 10px) : 5px;
+        animate height { duration: 60ms; }
+        animate background { duration: 150ms; }
+    }
 }
 
 export struct MediaRow {
@@ -259,6 +306,17 @@ export component MainWindow inherits Window {
             border-radius: 8px;
             border-width: 1px;
             border-color: #e2e8f0;
+            clip: true;
+
+            // 转写全局进度细条
+            if root.transcribe-progress >= 0 : Rectangle {
+                y: parent.height - 3px;
+                x: 0px;
+                height: 3px;
+                width: parent.width * max(0.01, min(1.0, root.transcribe-progress));
+                background: #3b82f6;
+                animate width { duration: 200ms; easing: ease-out; }
+            }
 
             HorizontalLayout {
                 padding-left: 14px;
@@ -407,48 +465,62 @@ export component MainWindow inherits Window {
 
                         Rectangle {
                             horizontal-stretch: 1;
-                            background: root.sidebar-tab == 0 ? #e0e7ff : #f1f5f9;
+                            background: root.sidebar-tab == 0 ? #e0e7ff : (tab0-touch.has-hover ? #e2e8f0 : #f1f5f9);
                             border-radius: 6px;
+                            animate background { duration: 150ms; easing: ease-out; }
+
                             HorizontalLayout {
                                 alignment: center;
                                 spacing: 6px;
                                 RiIcon {
                                     icon: Ri.tab-chapter;
                                     icon-size: 14px;
-                                    icon-color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
+                                    icon-color: root.sidebar-tab == 0 ? #3730a3 : (tab0-touch.has-hover ? #334155 : #64748b);
+                                    animate icon-color { duration: 150ms; easing: ease-out; }
                                 }
                                 Text {
                                     text: root.chapters.length == root.chapter-total ? "章节 (" + root.chapter-total + ")" : "章节 (" + root.chapters.length + "/" + root.chapter-total + ")";
-                                    color: root.sidebar-tab == 0 ? #3730a3 : #64748b;
+                                    color: root.sidebar-tab == 0 ? #3730a3 : (tab0-touch.has-hover ? #0f172a : #64748b);
                                     font-size: 13px;
                                     font-weight: root.sidebar-tab == 0 ? 700 : 500;
                                     vertical-alignment: center;
+                                    animate color { duration: 150ms; easing: ease-out; }
                                 }
                             }
-                            TouchArea { clicked => { root.sidebar-tab = 0; } }
+                            tab0-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.sidebar-tab = 0; }
+                            }
                         }
 
                         Rectangle {
                             horizontal-stretch: 1;
-                            background: root.sidebar-tab == 1 ? #e0e7ff : #f1f5f9;
+                            background: root.sidebar-tab == 1 ? #e0e7ff : (tab1-touch.has-hover ? #e2e8f0 : #f1f5f9);
                             border-radius: 6px;
+                            animate background { duration: 150ms; easing: ease-out; }
+
                             HorizontalLayout {
                                 alignment: center;
                                 spacing: 6px;
                                 RiIcon {
                                     icon: Ri.tab-media;
                                     icon-size: 14px;
-                                    icon-color: root.sidebar-tab == 1 ? #3730a3 : #64748b;
+                                    icon-color: root.sidebar-tab == 1 ? #3730a3 : (tab1-touch.has-hover ? #334155 : #64748b);
+                                    animate icon-color { duration: 150ms; easing: ease-out; }
                                 }
                                 Text {
                                     text: "媒体库 (" + root.media-list.length + ")";
-                                    color: root.sidebar-tab == 1 ? #3730a3 : #64748b;
+                                    color: root.sidebar-tab == 1 ? #3730a3 : (tab1-touch.has-hover ? #0f172a : #64748b);
                                     font-size: 13px;
                                     font-weight: root.sidebar-tab == 1 ? 700 : 500;
                                     vertical-alignment: center;
+                                    animate color { duration: 150ms; easing: ease-out; }
                                 }
                             }
-                            TouchArea { clicked => { root.sidebar-tab = 1; } }
+                            tab1-touch := TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.sidebar-tab = 1; }
+                            }
                         }
                     }
 
@@ -475,9 +547,13 @@ export component MainWindow inherits Window {
                                     height: row.level == 0 ? 34px : 28px;
                                     background: row.chapter-index == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
                                     border-radius: 5px;
+                                    animate background { duration: 120ms; easing: ease-out; }
 
                                     // 整行点击选中（声明在布局之前，让折叠箭头的 TouchArea 优先命中）
-                                    row-touch := TouchArea { clicked => { root.select-chapter(row.chapter-index); } }
+                                    row-touch := TouchArea {
+                                        mouse-cursor: pointer;
+                                        clicked => { root.select-chapter(row.chapter-index); }
+                                    }
 
                                     // 题行的缩进导轨：一眼看出属于上面那份材料，
                                     // 顺序错乱时（题跑出材料外面）也能立刻发现。
@@ -488,6 +564,7 @@ export component MainWindow inherits Window {
                                         height: parent.height - 10px;
                                         border-radius: 1px;
                                         background: row.chapter-index == root.current ? #60a5fa : #cbd5e1;
+                                        animate background { duration: 150ms; easing: ease-out; }
                                     }
 
                                     HorizontalLayout {
@@ -503,6 +580,7 @@ export component MainWindow inherits Window {
                                             height: 20px;
                                             border-radius: 4px;
                                             background: arrow-touch.has-hover ? #e2e8f0 : transparent;
+                                            animate background { duration: 120ms; easing: ease-out; }
 
                                             RiIcon {
                                                 icon: row.collapsed ? Ri.arrow-right-s : Ri.arrow-down-s;
@@ -652,10 +730,11 @@ export component MainWindow inherits Window {
                             spacing: 4px;
                             for m[i] in root.media-list : Rectangle {
                                 height: 48px;
-                                background: i == root.current-media-idx ? #eff6ff : transparent;
+                                background: i == root.current-media-idx ? #eff6ff : (media-touch.has-hover ? #f8fafc : transparent);
                                 border-radius: 6px;
-                                border-width: i == root.current-media-idx ? 1px : 0px;
-                                border-color: #bfdbfe;
+                                border-width: 1px;
+                                border-color: i == root.current-media-idx ? #bfdbfe : (media-touch.has-hover ? #e2e8f0 : transparent);
+                                animate background, border-color { duration: 150ms; easing: ease-out; }
 
                                 VerticalLayout {
                                     padding: 6px;
@@ -708,11 +787,15 @@ export component MainWindow inherits Window {
                                                 height: 4px;
                                                 background: #3b82f6;
                                                 border-radius: 2px;
+                                                animate width { duration: 250ms; easing: ease-out; }
                                             }
                                         }
                                     }
                                 }
-                                TouchArea { clicked => { root.select-media(i); } }
+                                media-touch := TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.select-media(i); }
+                                }
                             }
                         }
                     }
@@ -740,19 +823,23 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             height: 24px;
                             spacing: 8px;
-                            RiIcon {
+                            if !root.playing : RiIcon {
                                 icon: Ri.music;
                                 icon-size: 15px;
                                 icon-color: #64748b;
                             }
+                            if root.playing : AudioVisualizer {
+                                playing: root.playing;
+                            }
                             Text {
                                 text: root.current-track-title;
-                                color: #334155;
+                                color: root.playing ? #1d4ed8 : #334155;
                                 font-size: 13px;
                                 font-weight: 700;
                                 horizontal-stretch: 1;
                                 vertical-alignment: center;
                                 overflow: elide;
+                                animate color { duration: 150ms; easing: ease-out; }
                             }
                             if !root.show-transcript : Text {
                                 text: "原文已隐藏";
@@ -782,10 +869,11 @@ export component MainWindow inherits Window {
                                     alignment: start;
                                     spacing: 6px;
                                     for w in line : Rectangle {
-                                        background: w.idx == root.active-word ? #fef3c7 : transparent;
-                                        border-color: w.idx == root.active-word ? #f59e0b : transparent;
+                                        background: w.idx == root.active-word ? #fef3c7 : (word-touch.has-hover ? #f1f5f9 : transparent);
+                                        border-color: w.idx == root.active-word ? #f59e0b : (word-touch.has-hover ? #cbd5e1 : transparent);
                                         border-width: 1px;
                                         border-radius: 6px;
+                                        animate background, border-color { duration: 120ms; easing: ease-out; }
 
                                         HorizontalLayout {
                                             padding-left: 8px;
@@ -796,13 +884,14 @@ export component MainWindow inherits Window {
 
                                             Text {
                                                 text: w.text;
-                                                color: w.idx == root.active-word ? #92400e : #1e293b;
+                                                color: w.idx == root.active-word ? #92400e : (word-touch.has-hover ? #0f172a : #1e293b);
                                                 font-size: 20px;
                                                 font-weight: w.idx == root.active-word ? 700 : 400;
                                                 vertical-alignment: center;
+                                                animate color { duration: 120ms; easing: ease-out; }
                                             }
                                         }
-                                        TouchArea {
+                                        word-touch := TouchArea {
                                             mouse-cursor: pointer;
                                             clicked => { root.click-word(w.idx); }
                                         }
@@ -902,12 +991,20 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             spacing: 12px;
                             height: 24px;
-                            Text {
-                                text: root.time-display;
-                                color: #334155;
-                                font-size: 12px;
-                                font-weight: 600;
-                                vertical-alignment: center;
+                            HorizontalLayout {
+                                spacing: 6px;
+                                alignment: center;
+                                Text {
+                                    text: root.time-display;
+                                    color: root.playing ? #1d4ed8 : #334155;
+                                    font-size: 12px;
+                                    font-weight: 600;
+                                    vertical-alignment: center;
+                                    animate color { duration: 150ms; easing: ease-out; }
+                                }
+                                if root.playing : AudioVisualizer {
+                                    playing: root.playing;
+                                }
                             }
                             Slider {
                                 horizontal-stretch: 1;
@@ -991,12 +1088,16 @@ export component MainWindow inherits Window {
     }
 
     // ================= 测速与模型管理模态框 =================
-    if root.show-bench-modal : Rectangle {
+    bench-overlay := Rectangle {
         width: 100%;
         height: 100%;
+        visible: root.show-bench-modal || self.opacity > 0.01;
+        opacity: root.show-bench-modal ? 1.0 : 0.0;
         background: #0f172a66;
+        animate opacity { duration: 180ms; easing: ease-out; }
 
         TouchArea {
+            enabled: root.show-bench-modal;
             // 拦截点击穿透
         }
 
@@ -1004,7 +1105,8 @@ export component MainWindow inherits Window {
             width: 760px;
             height: modal-content.preferred-height;
             x: (parent.width - self.width) / 2;
-            y: max(0px, (parent.height - self.height) / 2);
+            y: max(0px, (parent.height - self.height) / 2) + (root.show-bench-modal ? 0px : 16px);
+            animate y { duration: 200ms; easing: ease-out; }
             background: #ffffff;
             border-radius: 12px;
             border-width: 1px;
@@ -1034,10 +1136,12 @@ export component MainWindow inherits Window {
                         height: 28px;
                         border-radius: 14px;
                         background: close-touch.has-hover ? #f1f5f9 : transparent;
+                        animate background { duration: 120ms; easing: ease-out; }
                         RiIcon {
                             icon: Ri.close;
                             icon-size: 16px;
                             icon-color: close-touch.has-hover ? #0f172a : #64748b;
+                            animate icon-color { duration: 120ms; easing: ease-out; }
                         }
                         close-touch := TouchArea {
                             mouse-cursor: pointer;
@@ -1305,6 +1409,7 @@ export component MainWindow inherits Window {
                                     height: 100%;
                                     border-radius: 2px;
                                     background: #0284c7;
+                                    animate width { duration: 200ms; easing: ease-out; }
                                 }
                             }
                         }
@@ -1348,12 +1453,16 @@ export component MainWindow inherits Window {
     }
 
     // ================= 关于模态框 =================
-    if root.show-about-modal : Rectangle {
+    about-overlay := Rectangle {
         width: 100%;
         height: 100%;
+        visible: root.show-about-modal || self.opacity > 0.01;
+        opacity: root.show-about-modal ? 1.0 : 0.0;
         background: #0f172a66;
+        animate opacity { duration: 180ms; easing: ease-out; }
 
         TouchArea {
+            enabled: root.show-about-modal;
             // 点击半透明背景关闭
             clicked => { root.close-about-modal(); }
         }
@@ -1362,7 +1471,8 @@ export component MainWindow inherits Window {
             width: 580px;
             height: about-modal-content.preferred-height;
             x: (parent.width - self.width) / 2;
-            y: max(0px, (parent.height - self.height) / 2);
+            y: max(0px, (parent.height - self.height) / 2) + (root.show-about-modal ? 0px : 16px);
+            animate y { duration: 200ms; easing: ease-out; }
             background: #ffffff;
             border-radius: 12px;
             border-width: 1px;
@@ -1370,6 +1480,7 @@ export component MainWindow inherits Window {
             clip: true;
 
             TouchArea {
+                enabled: root.show-about-modal;
                 // 拦截内部穿透点击
             }
 
@@ -1435,10 +1546,12 @@ export component MainWindow inherits Window {
                         height: 28px;
                         border-radius: 14px;
                         background: about-close-touch.has-hover ? #f1f5f9 : transparent;
+                        animate background { duration: 120ms; easing: ease-out; }
                         RiIcon {
                             icon: Ri.close;
                             icon-size: 16px;
                             icon-color: about-close-touch.has-hover ? #0f172a : #64748b;
+                            animate icon-color { duration: 120ms; easing: ease-out; }
                         }
                         about-close-touch := TouchArea {
                             mouse-cursor: pointer;
