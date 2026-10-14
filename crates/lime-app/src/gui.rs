@@ -29,7 +29,10 @@ enum Msg {
     Status(String),
     AnalyzeDone(Box<AnalysisCore>, Box<Vec<f32>>, u32),
     TranscribeProgress(f32),
-    TranscribeDone(Vec<Sentence>),
+    TranscribeDone {
+        sentences: Vec<Sentence>,
+        chapters: Vec<Chapter>,
+    },
     Error(String),
     #[allow(dead_code)]
     BenchModelUpdate {
@@ -865,9 +868,18 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         });
                         match r {
                             Ok(t) => {
+                                // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料
+                                let rep = lime_analyze::merge_repeated_materials_with(
+                                    &core.chapters,
+                                    &t.sentences,
+                                    &lime_analyze::RepeatParams::default(),
+                                );
                                 let mut sents = t.sentences;
-                                assign_sentences_to_chapters(&mut sents, &core.chapters);
-                                let _ = tx2.send(Msg::TranscribeDone(sents));
+                                assign_sentences_to_chapters(&mut sents, &rep.chapters);
+                                let _ = tx2.send(Msg::TranscribeDone {
+                                    sentences: sents,
+                                    chapters: rep.chapters,
+                                });
                             }
                             Err(e) => {
                                 let _ = tx2.send(Msg::Error(format!("转写失败: {e}")));
@@ -1578,10 +1590,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                             ui.set_bench_summary("转写引擎已就绪".into());
                         }
                     }
-                    Msg::TranscribeDone(sentences) => {
+                    Msg::TranscribeDone { sentences, chapters } => {
                         ui.set_transcribe_progress(-1.0);
                         ui.set_has_subtitles(true);
-                        ui.set_status(format!("转写完成：{} 句", sentences.len()).into());
                         last_sentence.set(usize::MAX);
                         let mut st = state.borrow_mut();
                         if let Some(mid) = st.media_id {
@@ -1589,9 +1600,31 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                             let model = crate::cli::asr_model_label();
                             let _ = store.borrow().save_sentences(mid, &sentences);
                             let _ = store.borrow().save_analysis(mid, &model, &fp, "");
-                            refresh_media_list(&ui, &store.borrow(), &mut st);
+                        }
+                        refresh_media_list(&ui, &store.borrow(), &mut st);
+                        // 切分可能因「同材料重复朗读」被合并：刷新章节树并落库
+                        let changed = st
+                            .core
+                            .as_ref()
+                            .map(|c| c.chapters != chapters)
+                            .unwrap_or(false);
+                        let mut summary = format!("转写完成：{} 句", sentences.len());
+                        if changed {
+                            let fresh = canonical_chapters(&chapters);
+                            let saved = save_and_reload_chapters(&store, st.media_id, fresh);
+                            if let Some(core) = st.core.as_mut() {
+                                core.chapters = saved.clone();
+                            }
+                            let hidden = hidden_rows(&saved, &st.collapsed_materials);
+                            let current = uncloak_current(&saved, &hidden, ui.get_current());
+                            set_chapter_rows(&ui, &saved, &st.collapsed_materials);
+                            ui.set_current(current);
+                            ui.set_has_chapters(!saved.is_empty());
+                            summary =
+                                format!("转写完成：{} 句 · {}", sentences.len(), chapters_summary(&saved));
                         }
                         st.sentences = sentences;
+                        ui.set_status(summary.into());
                     }
                     Msg::AnalyzeDone(core, mono, rate) => {
                         let core = *core;
@@ -1790,10 +1823,8 @@ fn load_or_analyze_media(
     if let Some(limed_path) = find_matching_limed(&path, info.duration_ms, Some(size as u64)) {
         if let Ok(limed) = LimedFile::load(&limed_path) {
             cache_hit = true;
-            // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化
-            let fresh = canonical_chapters(&limed.chapters);
-            // 字幕要过转写指纹：旧解码参数（如 -mc -1 的重复幻觉）产生的字幕不再展示；
-            // 章节照常可用
+            // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化；字幕要过转写指纹：
+            // 旧解码参数（如 -mc -1 的重复幻觉）产生的字幕不再展示；章节照常可用
             let limed_stale = subtitle_cache_stale(Some(limed.meta.asr_fp.as_str()), false);
             // 旧 `.limed` 字幕失效时，优先用 SQLite 里已用新管线转写好的字幕：
             // 否则用户重新转写后，一重开文件又会被过期的 `.limed` 盖住。
@@ -1814,7 +1845,12 @@ fn load_or_analyze_media(
                 None if stale_subtitles => Vec::new(),
                 None => limed.sentences,
             };
-            let chapters = save_and_reload_chapters(&store, media_id, fresh);
+            let merged = if sents.is_empty() {
+                canonical_chapters(&limed.chapters)
+            } else {
+                lime_analyze::merge_repeated_materials(&limed.chapters, &sents)
+            };
+            let chapters = save_and_reload_chapters(&store, media_id, merged);
             if let Some(mid) = media_id {
                 if stale_subtitles {
                     let _ = store.borrow().clear_sentences(mid);
@@ -1892,6 +1928,16 @@ fn load_or_analyze_media(
                         Vec::new()
                     } else {
                         cached_sents
+                    };
+                    // 语义兜底：同一材料朗读两遍时合并，并把修复写回本地库
+                    let chapters = if sents.is_empty() {
+                        chapters
+                    } else {
+                        let merged = lime_analyze::merge_repeated_materials(&chapters, &sents);
+                        if merged != chapters {
+                            let _ = store.borrow().replace_chapters(mid, &merged);
+                        }
+                        merged
                     };
                     let collapsed = state.borrow().collapsed_materials.clone();
                     set_chapter_rows(ui, &chapters, &collapsed);

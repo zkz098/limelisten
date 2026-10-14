@@ -9,9 +9,11 @@
 use lime_core::{normalize_chapters, Chapter, ChapterLevel, ChapterSource};
 
 pub mod chime;
+pub mod repeat;
 pub mod snap;
 
 pub use chime::{detect_chimes, Chime, ChimeParams};
+pub use repeat::{merge_repeated_materials, merge_repeated_materials_with, RepeatMerge, RepeatParams};
 
 /// 分析参数（可在参数面板里调，用于"只给参数面板重跑"的修正路径）。
 #[derive(Debug, Clone, Copy, PartialEq)]

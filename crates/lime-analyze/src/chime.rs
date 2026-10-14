@@ -5,11 +5,15 @@
 //! - 每一对都出现在**答题间隔（≥2 s 近数字静音）的末尾**，即材料分界处
 //! - 电平：立体声素材 −16.1 / −22.8 dB；单声道素材 −21.2 / −24.8 dB
 //!
-//! 判定用的四个判别式（缺一不可，实测可把误报从 900+ 压到 12–14 个）：
+//! 判定用的判别式（缺一不可，实测可把误报从 900+ 压到 12–14 个）：
 //! 1. 快速起振（120 ms 内上升 ≥10 dB）
 //! 2. 显著高于局部中位（±5 s 内 ≥10 dB）
 //! 3. **单调衰减**（峰值后 1.2 s 内下降 ≥14 dB，且中途不回升 >4 dB）—— 语音不会这样
 //! 4. **前面是静音**（起振前 2 s 的宽带 RMS ≤ −70 dB）—— 这一条把语音谐波全部排除
+//! 5. **音调纯度**（带内峰值 ≈ 同时刻宽带 RMS，见 `ChimeParams::tonality_db`）——
+//!    真叮咚是近纯音，带内能量几乎等于总能量；语音/爆破的起振是宽带的，带内比宽带低
+//!    10–22 dB。这一条专门拦「同一材料朗读第二遍处」的弱瞬态：它们的叮→咚间隔可能
+//!    恰好落在 0.59 s 附近，仅靠前面四条会被误判为材料边界，把一份材料切成两份。
 //!
 //! 实现用二阶带通（biquad）+ 滑动包络，O(n)，1 GB 级音频也只需几百毫秒。
 
@@ -85,6 +89,10 @@ pub struct ChimeParams {
     /// 实测：conf=0 的几处是语音停顿里的弱谐波（Δ 偏离 0.59 s 很多），
     /// 把它们当真会把材料数从 12 涨到 18。
     pub min_confidence: f32,
+    /// **音调纯度闸门**：叮的**带内峰值**相对该峰值处的宽带 RMS 至少要高出这么多 dB
+    /// （负值即允许带内略低于宽带）。真叮咚 ≈0 dB（近纯音），语音/噪声起振低 10–22 dB。
+    /// 实测四个素材：真的全部 ≈0，假的 ≤−10，取 −8 有充足余量。
+    pub tonality_db: f32,
 }
 
 impl Default for ChimeParams {
@@ -112,6 +120,7 @@ impl Default for ChimeParams {
             pair_ideal_s: 0.59,
             pair_conf_tol_s: 0.30,
             min_confidence: 0.35,
+            tonality_db: -8.0,
         }
     }
 }
@@ -220,6 +229,20 @@ pub fn detect_band(
                 let no_re = post.iter().all(|v| *v <= peak + params.no_rerise_db);
                 let drop = peak - post.last().copied().unwrap_or(peak);
                 let t_ms = i as f32 * dt_ms;
+                // 带内峰值的绝对时刻：衰减窗最长 1.2 s，里面可能跟过后出现的另一个
+                // 宽带瞬态（如朗读第二遍的起振）；音调纯度必须拿“峰值处”的宽带对比，
+                // 不能拿起振处的宽带。
+                let peak_t_ms = (i + pk_i) as f32 * dt_ms;
+                let pc = (((peak_t_ms - 40.0).max(0.0) / rms_hop_ms) as usize).min(rms.len());
+                let pd = (((peak_t_ms + 200.0) / rms_hop_ms) as usize).min(rms.len());
+                let peak_rms = if pd > pc {
+                    rms[pc..pd].iter().copied().fold(f32::MIN, f32::max)
+                } else {
+                    -200.0
+                };
+                // 音调纯度：真叮咚是近纯音，带内峰值 ≈ 同时刻宽带；语音/噪声起振是宽带的，
+                // 带内比宽带低 10–22 dB（见模块头 §5）。
+                let tonal_ok = peak >= peak_rms + params.tonality_db;
                 let pre_ok = if require_pre_silence {
                     let a = (((t_ms - params.pre_silence_s * 1000.0) / rms_hop_ms).max(0.0)) as usize;
                     let b = (((t_ms - params.pre_exclude_ms) / rms_hop_ms).max(0.0) as usize)
@@ -229,20 +252,12 @@ pub fn detect_band(
                     } else {
                         99.0
                     };
-                    // 标记自身的宽带电平（起振后 300 ms 内）
-                    let c = ((t_ms / rms_hop_ms) as usize).min(rms.len());
-                    let d = (((t_ms + 300.0) / rms_hop_ms) as usize).min(rms.len());
-                    let self_max = if d > c {
-                        rms[c..d].iter().copied().fold(f32::MIN, f32::max)
-                    } else {
-                        -200.0
-                    };
                     pre_max <= params.pre_silence_db
-                        && pre_max <= self_max - params.pre_relative_db
+                        && pre_max <= peak_rms - params.pre_relative_db
                 } else {
                     true
                 };
-                if no_re && drop >= params.decay_drop_db && pre_ok {
+                if no_re && drop >= params.decay_drop_db && pre_ok && tonal_ok {
                     out.push((t_ms, peak));
                     i = lim;
                     continue;
@@ -368,5 +383,33 @@ mod tests {
         }
         let chimes = detect_chimes(&x, sr, &ChimeParams::default());
         assert!(chimes.is_empty(), "sustained noise must not match, got {chimes:?}");
+    }
+
+    /// 宽带瞬态对（间隔 ≈0.59 s）不应被当成叮咚：它没有音调纯度。
+    /// 复现「同一材料朗读第二遍处的弱瞬态刚好 Δ≈0.59 s → 骗过旧检测器 → 一份材料被切成两份」。
+    #[test]
+    fn rejects_broadband_transient_pair() {
+        let sr = 32_000u32;
+        let mut x = vec![0.0f32; sr as usize * 4];
+        let mut seed = 0x1234_5678u32;
+        let mut rnd = || {
+            seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+            (seed >> 8) as f32 / 16_777_216.0 - 0.5
+        };
+        let mut burst = |buf: &mut [f32], at_s: f32, amp: f32| {
+            let a = (at_s * sr as f32) as usize;
+            let n = (0.35 * sr as f32) as usize;
+            for i in 0..n.min(buf.len() - a) {
+                let t = i as f32 / sr as f32;
+                buf[a + i] += amp * (-t / 0.05).exp() * rnd();
+            }
+        };
+        burst(&mut x, 1.0, 1.0);
+        burst(&mut x, 1.59, 1.0);
+        let chimes = detect_chimes(&x, sr, &ChimeParams::default());
+        assert!(
+            chimes.is_empty(),
+            "宽带瞬态对不应被当成叮咚（Δ≈0.59s 也不行）, got {chimes:?}"
+        );
     }
 }

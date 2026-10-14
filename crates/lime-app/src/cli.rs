@@ -380,7 +380,7 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
 
 /// 只跑 ASR 链路（不启 GUI）：打印前 N 句 + 吸附前后对比
 pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
-    let core = analyze(Path::new(file), |m| eprintln!("[analysis] {m}"))?;
+    let mut core = analyze(Path::new(file), |m| eprintln!("[analysis] {m}"))?;
     // 重新解码取单声道样本（避免 analyze 返回值过大）
     let info = crate::cli::analyze_mono(Path::new(file))?;
     let t0 = std::time::Instant::now();
@@ -465,6 +465,16 @@ pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
             .collect::<Vec<_>>()
     );
     println!("\n=== 句子（前 {show} 句）===");
+    // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料
+    let merged = lime_analyze::merge_repeated_materials_with(
+        &core.chapters,
+        &tr.sentences,
+        &lime_analyze::RepeatParams::default(),
+    );
+    core.chapters = merged.chapters;
+    if merged.merged > 0 {
+        println!("（合并同材料重复朗读 {0} 处）", merged.merged);
+    }
     let mut sentences = tr.sentences.clone();
     assign_sentences_to_chapters(&mut sentences, &core.chapters);
     for s in sentences.iter().take(show) {
@@ -584,7 +594,7 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         return Err(anyhow!("音频文件不存在: {file}"));
     }
     println!("==== 开始预处理并打包 .limed 缓存: {} ====", path.display());
-    let core = analyze(path, |m| println!("  [切分] {m}"))?;
+    let mut core = analyze(path, |m| println!("  [切分] {m}"))?;
     let (mono, _) = analyze_mono(path)?;
 
     let sentences = {
@@ -592,6 +602,16 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         let tr = transcribe(&core, &mono, |m, p| {
             println!("    [转写进度 {:.0}%] {m}", p * 100.0);
         })?;
+        // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料（降级为「第 N 遍」）
+        let rep = lime_analyze::merge_repeated_materials_with(
+            &core.chapters,
+            &tr.sentences,
+            &lime_analyze::RepeatParams::default(),
+        );
+        if rep.merged > 0 {
+            println!("  合并同材料重复朗读：{} 处", rep.merged);
+        }
+        core.chapters = rep.chapters;
         let mut sents = tr.sentences;
         assign_sentences_to_chapters(&mut sents, &core.chapters);
         sents
