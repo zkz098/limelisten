@@ -31,6 +31,30 @@ pub struct WhisperCli {
 /// 指纹计算与 `WhisperCli::new` 共用这个常量，避免两处漂移。
 pub const DEFAULT_LANGUAGE: &str = "en";
 
+/// 转写线程数：**留一个核**给 UI 渲染与音频回调。
+///
+/// whisper.cpp 默认吃满所有核；在 2–4 核的低端机上这会让界面卡顿、音频欠载。
+/// 1 核机器上不打算再留（`max(1)`），否则就没法跑。
+pub fn default_threads() -> usize {
+    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    cores.saturating_sub(1).max(1)
+}
+
+/// 把**当前线程**降到 Below Normal 优先级（仅 Windows 生效，其它平台无操作）。
+///
+/// 切分 / 转写都是长任务，在派生的分析线程入口调用它，避免把 UI 与音频回调抢卡。
+pub fn set_current_thread_below_normal() {
+    #[cfg(windows)]
+    unsafe {
+        extern "system" {
+            fn GetCurrentThread() -> *mut std::ffi::c_void;
+            fn SetThreadPriority(h_thread: *mut std::ffi::c_void, n_priority: i32) -> i32;
+        }
+        const THREAD_PRIORITY_BELOW_NORMAL: i32 = -1;
+        SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Progress {
     pub percent: f32,
@@ -38,8 +62,7 @@ pub struct Progress {
 
 impl WhisperCli {
     pub fn new(exe: impl Into<PathBuf>, model: impl Into<PathBuf>) -> Self {
-        let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
-        Self { exe: exe.into(), model: model.into(), threads, language: DEFAULT_LANGUAGE.into() }
+        Self { exe: exe.into(), model: model.into(), threads: default_threads(), language: DEFAULT_LANGUAGE.into() }
     }
 
     /// 逐词转写。`out_base` 为输出文件前缀（生成 `<base>.json`）。
@@ -59,8 +82,8 @@ impl WhisperCli {
             PathBuf::from(s)
         };
         let _ = std::fs::remove_file(json_path(out_base));
-        let mut child = Command::new(&self.exe)
-            .arg("-m")
+        let mut cmd = Command::new(&self.exe);
+        cmd.arg("-m")
             .arg(&self.model)
             .arg("-f")
             .arg(wav)
@@ -80,7 +103,15 @@ impl WhisperCli {
             .arg("-of")
             .arg(out_base)
             .stdout(Stdio::null())
-            .stderr(Stdio::piped())
+            .stderr(Stdio::piped());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // 低端机上别让转写把 UI 渲染 / 音频回调一起抢死：子进程降到 Below Normal
+            const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
+            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| Error::Asr(format!("spawn {}: {e}", self.exe.display())))?;
 
@@ -316,5 +347,17 @@ mod tests {
         assert_eq!(words.len(), 2);
         assert_eq!((words[0].start_ms, words[0].end_ms), (0, 120));
         assert_eq!((words[1].start_ms, words[1].end_ms), (120, 540));
+    }
+
+    /// 转写必须留出至少一个核给 UI/音频，且不能超过可用核数。
+    #[test]
+    fn default_threads_reserves_a_core() {
+        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+        let t = default_threads();
+        assert!(t >= 1, "至少要能跑（1 核机器）");
+        assert!(t <= cores, "不能超过可用核数");
+        if cores > 1 {
+            assert_eq!(t, cores - 1, "应当留一个核");
+        }
     }
 }

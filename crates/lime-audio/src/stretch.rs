@@ -77,17 +77,25 @@ impl Stretcher {
 
     /// 处理一个输入块（交错，长度必须是 channels 的整数倍），返回输出切片。
     pub fn process(&mut self, input: &[f32]) -> &[f32] {
+        let mut buf = std::mem::take(&mut self.out_buf);
+        self.process_into(input, &mut buf);
+        self.out_buf = buf;
+        &self.out_buf
+    }
+
+    /// 与 `process` 相同，但把输出写进调用方提供的缓冲（复用，避免每块分配）。
+    pub fn process_into(&mut self, input: &[f32], out: &mut Vec<f32>) {
         debug_assert_eq!(input.len() % self.channels, 0, "input must be interleaved");
         if self.bypass {
-            self.out_buf.clear();
-            self.out_buf.extend_from_slice(input);
-            return &self.out_buf;
+            out.clear();
+            out.extend_from_slice(input);
+            return;
         }
         let in_frames = input.len() / self.channels;
         let out_frames = self.out_frames_for(in_frames);
-        self.out_buf.resize(out_frames * self.channels, 0.0);
-        self.inner.process(input, self.out_buf.as_mut_slice());
-        &self.out_buf
+        out.clear();
+        out.resize(out_frames * self.channels, 0.0);
+        self.inner.process(input, out.as_mut_slice());
     }
 
     /// 已喂入的输入帧对应的输出延迟（帧）。

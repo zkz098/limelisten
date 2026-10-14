@@ -134,9 +134,11 @@ impl Engine {
         shared.duration_ms.store(info.duration_ms, Relaxed);
 
         let (tx, rx) = bounded::<(u64, Vec<f32>)>(QUEUE_BLOCKS);
+        // 输出缓冲回收通道：回调消费完的 Vec 由此归还，供传输线程复用（避免每块 malloc/free）
+        let (recycle_tx, recycle_rx) = bounded::<Vec<f32>>(QUEUE_BLOCKS + 4);
         let (cmd_tx, cmd_rx) = bounded::<Cmd>(32);
 
-        let stream = build_stream(&device, config, shared.clone(), rx)?;
+        let stream = build_stream(&device, config, shared.clone(), rx, recycle_tx)?;
         stream
             .play()
             .map_err(|e| Error::Decode(format!("stream play: {e}")))?;
@@ -146,7 +148,9 @@ impl Engine {
         let worker = std::thread::Builder::new()
             .name("lime-transport".into())
             .spawn(move || {
-                if let Err(e) = worker_loop(&path_buf, &sh, tx, cmd_rx, device_rate, device_channels) {
+                if let Err(e) =
+                    worker_loop(&path_buf, &sh, tx, recycle_rx, cmd_rx, device_rate, device_channels)
+                {
                     eprintln!("[lime-audio] transport 线程结束: {e}");
                 }
             })
@@ -224,12 +228,22 @@ fn build_stream(
     config: cpal::StreamConfig,
     shared: Arc<Shared>,
     rx: Receiver<(u64, Vec<f32>)>,
+    recycle_tx: Sender<Vec<f32>>,
 ) -> Result<cpal::Stream> {
     match device.default_output_config().map(|c| c.sample_format()) {
-        Ok(cpal::SampleFormat::F32) => build_typed::<f32>(device, config, shared, rx),
-        Ok(cpal::SampleFormat::I16) => build_typed::<i16>(device, config, shared, rx),
-        Ok(cpal::SampleFormat::U16) => build_typed::<u16>(device, config, shared, rx),
-        _ => build_typed::<f32>(device, config, shared, rx),
+        Ok(cpal::SampleFormat::F32) => build_typed::<f32>(device, config, shared, rx, recycle_tx),
+        Ok(cpal::SampleFormat::I16) => build_typed::<i16>(device, config, shared, rx, recycle_tx),
+        Ok(cpal::SampleFormat::U16) => build_typed::<u16>(device, config, shared, rx, recycle_tx),
+        _ => build_typed::<f32>(device, config, shared, rx, recycle_tx),
+    }
+}
+
+/// 把回调消费完的输出缓冲归还给传输线程复用；通道满或无容量时直接丢弃。
+/// 音频回调里只做非阻塞 `try_send`，不会阻塞。
+#[inline]
+fn recycle(tx: &Sender<Vec<f32>>, v: Vec<f32>) {
+    if v.capacity() > 0 {
+        let _ = tx.try_send(v);
     }
 }
 
@@ -238,6 +252,7 @@ fn build_typed<T>(
     config: cpal::StreamConfig,
     shared: Arc<Shared>,
     rx: Receiver<(u64, Vec<f32>)>,
+    recycle_tx: Sender<Vec<f32>>,
 ) -> Result<cpal::Stream>
 where
     T: cpal::SizedSample + cpal::Sample + cpal::FromSample<f32> + Send + 'static,
@@ -257,9 +272,11 @@ where
             move |data: &mut [T], _| {
                 let gen = sh.gen.load(Relaxed);
                 if gen != local_gen {
-                    // 丢弃全部已排队数据（跳转/暂停/循环时用）
-                    while rx.try_recv().is_ok() {}
-                    cur.clear();
+                    // 丢弃全部已排队数据（跳转/暂停/循环时用），并把缓冲返还复用
+                    while let Ok((_, v)) = rx.try_recv() {
+                        recycle(&recycle_tx, v);
+                    }
+                    recycle(&recycle_tx, std::mem::take(&mut cur));
                     cur_pos = 0;
                     local_gen = gen;
                     sh.ack_gen.store(gen, Relaxed);
@@ -270,9 +287,10 @@ where
                         match rx.try_recv() {
                             Ok((g, v)) => {
                                 if g != local_gen {
+                                    recycle(&recycle_tx, v);
                                     continue;
                                 }
-                                cur = v;
+                                recycle(&recycle_tx, std::mem::replace(&mut cur, v));
                                 cur_pos = 0;
                             }
                             Err(_) => {
@@ -302,10 +320,14 @@ where
 }
 
 /// 传输线程：解码 → （重采样）→ 变速 → 入队；同时负责跳转/循环/自动暂停。
+///
+/// 性能：所有中间缓冲（解码块 / 声道归一化 / 重采样 / 输出）都在循环外分配一次并复用；
+/// 输出 Vec 由回调通过 `recycle_rx` 归还后再用，稳态下**每块不再有堆分配**。
 fn worker_loop(
     path: &Path,
     shared: &Arc<Shared>,
     tx: Sender<(u64, Vec<f32>)>,
+    recycle_rx: Receiver<Vec<f32>>,
     cmd: Receiver<Cmd>,
     device_rate: u32,
     device_channels: usize,
@@ -328,7 +350,20 @@ fn worker_loop(
     // 启动/跳转后要丢弃的预热输出帧数（否则开头是拉伸器的高频垃圾）
     let mut skip_out: usize = stretch.warmup_frames();
 
+    // 复用的工作缓冲：只在首次到达峰值时分配，稳态下每块不再 malloc/free。
+    let mut src_block: Vec<f32> = Vec::new();
+    let mut norm: Vec<f32> = Vec::new();
+    let mut resampled: Vec<f32> = Vec::new();
+    let mut free: Vec<Vec<f32>> = Vec::new(); // 回调回收的输出缓冲池
+
     loop {
+        // 回收回调用完的输出缓冲（池化复用）
+        while let Ok(v) = recycle_rx.try_recv() {
+            if free.len() < QUEUE_BLOCKS + 4 {
+                free.push(v);
+            }
+        }
+
         // ---- 命令 ----
         while let Ok(c) = cmd.try_recv() {
             match c {
@@ -409,8 +444,8 @@ fn worker_loop(
             continue;
         }
 
-        // ---- 解码一块 ----
-        let mut src_block: Vec<f32> = Vec::new();
+        // ---- 解码一块（复用 src_block）----
+        src_block.clear();
         while src_block.len() < BLOCK_FRAMES * src_ch {
             match dec.next_packet()? {
                 Some(buf) => src_block.extend_from_slice(buf),
@@ -419,9 +454,12 @@ fn worker_loop(
         }
 
         let eof = src_block.len() < BLOCK_FRAMES * src_ch;
-        if src_block.is_empty() {            // 尾部：把变速器内部缓冲吐出来，然后停
+        if src_block.is_empty() {
+            // 尾部：把变速器内部缓冲吐出来，然后停
             let tail_frames = stretch.latency_frames().max(BLOCK_FRAMES);
-            let mut out = vec![0.0f32; tail_frames * device_channels];
+            let mut out = free.pop().unwrap_or_default();
+            out.clear();
+            out.resize(tail_frames * device_channels, 0.0);
             stretch.flush(&mut out);
             let _ = send_block(&tx, gen, out);
             shared.eof.store(true, Relaxed);
@@ -433,37 +471,43 @@ fn worker_loop(
         }
 
         // ---- 声道数归一化（单声道 → 设备声道数）----
+        // 声道数已一致时直接借用解码块，避免多余拷贝。
         let frames = src_block.len() / src_ch;
-        let mut norm: Vec<f32> = Vec::with_capacity(frames * device_channels);
-        if src_ch == device_channels {
-            norm = src_block;
+        norm.clear();
+        let normalized: &[f32] = if src_ch == device_channels {
+            &src_block
         } else if src_ch == 1 {
+            norm.reserve(frames * device_channels);
             for f in 0..frames {
                 let v = src_block[f];
                 for _ in 0..device_channels {
                     norm.push(v);
                 }
             }
+            &norm
         } else {
+            norm.reserve(frames * device_channels);
             for f in 0..frames {
                 for c in 0..device_channels {
                     norm.push(src_block[f * src_ch + c.min(src_ch - 1)]);
                 }
             }
-        }
-
-        // ---- 重采样兜底 ----
-        let at_device_rate: Vec<f32> = if let Some(r) = resampler.as_mut() {
-            let out_frames = ((frames as f64) / rate_scale).round() as usize;
-            let mut y = vec![0.0f32; out_frames.max(1) * device_channels];
-            r.process(&norm, &mut y);
-            y
-        } else {
-            norm
+            &norm
         };
 
-        // ---- 变速 ----
-        let mut out = stretch.process(&at_device_rate).to_vec();
+        // ---- 取一个可复用的输出缓冲 ----
+        let mut out = free.pop().unwrap_or_default();
+
+        // ---- 重采样兜底（复用 resampled）----
+        if let Some(r) = resampler.as_mut() {
+            let out_frames = ((frames as f64) / rate_scale).round() as usize;
+            resampled.clear();
+            resampled.resize(out_frames.max(1) * device_channels, 0.0);
+            r.process(normalized, &mut resampled);
+            stretch.process_into(&resampled, &mut out);
+        } else {
+            stretch.process_into(normalized, &mut out);
+        }
 
         // ---- 丢弃预热输出（不算可听内容）----
         if skip_out > 0 {
@@ -473,21 +517,28 @@ fn worker_loop(
             out.drain(..drop_frames * device_channels);
         }
         if out.is_empty() {
-            // 整块都被当作预热丢掉：仍要推进源位置，但不入队
+            // 整块都被当作预热丢掉：仍要推进源位置，但不入队；缓冲放回池里
             src_fed += frames as u64;
             shared.src_fed.store(src_fed, Relaxed);
+            free.push(out);
             continue;
         }
 
-        // ---- 入队（阻塞式，尊重命令响应）----
-        loop {
-            match tx.try_send((gen, out.clone())) {
+        let out_frames = out.len() / device_channels;
+
+        // ---- 入队（移动所有权；满时拿回来重试，不再 clone）----
+        let mut payload = Some(out);
+        while let Some(block) = payload.take() {
+            match tx.try_send((gen, block)) {
                 Ok(()) => break,
-                Err(TrySendError::Full(_)) => {
+                Err(TrySendError::Full(v)) => {
                     std::thread::sleep(Duration::from_millis(3));
                     if shared.gen.load(Relaxed) != gen {
-                        break; // 期间发生了跳转
+                        // 期间发生了跳转：这一块作废，缓冲放回池里复用
+                        free.push(v.1);
+                        break;
                     }
+                    payload = Some(v.1);
                 }
                 Err(TrySendError::Disconnected(_)) => return Ok(()),
             }
@@ -495,7 +546,7 @@ fn worker_loop(
 
         src_fed += frames as u64;
         shared.src_fed.store(src_fed, Relaxed);
-        let produced = shared.out_produced.load(Relaxed) + (out.len() / device_channels) as u64;
+        let produced = shared.out_produced.load(Relaxed) + out_frames as u64;
         shared.out_produced.store(produced, Relaxed);
 
         // ---- 更新可听位置 ----
@@ -552,5 +603,81 @@ fn send_block(tx: &Sender<(u64, Vec<f32>)>, gen: u64, block: Vec<f32>) -> std::r
             }
             Err(TrySendError::Disconnected(_)) => return Err(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_test_wav(path: &Path, sr: u32, secs: u32) {
+        let samples: Vec<f32> = (0..sr as usize * secs as usize)
+            .map(|i| 0.3 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin())
+            .collect();
+        crate::render::write_wav(path, &samples, 1, sr).expect("write test wav");
+    }
+
+    /// 直接驱动 `worker_loop`（不依赖真实声卡），模拟音频回调消费 + 缓冲回收：
+    /// 验证队列产出、回收通道、位置推进都能正常工作。
+    #[test]
+    fn worker_loop_produces_and_recycles() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("lime_engine_test_{}.wav", std::process::id()));
+        write_test_wav(&path, 48_000, 2);
+
+        let shared = Arc::new(Shared::default());
+        shared.speed_milli.store(1000, Relaxed);
+        shared.duration_ms.store(2000, Relaxed);
+
+        let (tx, rx) = bounded::<(u64, Vec<f32>)>(8);
+        let (recycle_tx, recycle_rx) = bounded::<Vec<f32>>(16);
+        let (cmd_tx, cmd_rx) = bounded::<Cmd>(8);
+        cmd_tx.send(Cmd::Play).unwrap();
+
+        let sh = shared.clone();
+        let p = path.clone();
+        let worker = std::thread::spawn(move || {
+            worker_loop(&p, &sh, tx, recycle_rx, cmd_rx, 48_000, 1).unwrap();
+        });
+
+        // 模拟回调：消费队列帧（计入 out_consumed），并把缓冲回收给 worker 复用
+        let mut got = 0usize;
+        let mut recycled = 0usize;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(300)) {
+                Ok((_g, v)) => {
+                    got += v.len();
+                    shared.out_consumed.fetch_add(v.len() as u64, Relaxed);
+                    let _ = recycle_tx.try_send(v);
+                    recycled += 1;
+                }
+                Err(_) if shared.finished() => break,
+                Err(_) => {}
+            }
+        }
+        // 收尾：把剩余的块也消费掉
+        while let Ok((_g, v)) = rx.try_recv() {
+            got += v.len();
+            shared.out_consumed.fetch_add(v.len() as u64, Relaxed);
+            let _ = recycle_tx.try_send(v);
+        }
+        assert!(got >= 96_000, "只产出 {got} 帧（2 s @48k 应为 96000+）");
+        assert!(recycled > 0, "没有块被回收");
+        // 消费与产出同步后，可听位置应明显推进
+        let pos_before = shared.pos_ms();
+        assert!(pos_before > 800, "位置没有推进: {pos_before}");
+
+        // seek 后位置应立即回退到目标附近
+        cmd_tx.send(Cmd::Seek(0)).unwrap();
+        let t0 = std::time::Instant::now();
+        while t0.elapsed() < Duration::from_secs(2) && shared.pos_ms() > 1000 {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(shared.pos_ms() <= 1000, "seek 后位置 {} 未回退", shared.pos_ms());
+
+        let _ = cmd_tx.send(Cmd::Quit);
+        let _ = worker.join();
+        let _ = std::fs::remove_file(&path);
     }
 }

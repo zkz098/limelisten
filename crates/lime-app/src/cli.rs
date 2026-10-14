@@ -7,7 +7,7 @@ use lime_analyze::{
     AnalyzeParams, Chime, GapKind, Structure,
 };
 use lime_asr::{group_sentences, WhisperCli};
-use lime_audio::{render::write_wav, resample::LinearResampler};
+use lime_audio::resample::LinearResampler;
 use lime_audio::AudioInfo;
 use lime_core::{Chapter, ChapterLevel, LimedFile, LimedMeta, Sentence, Word};
 use lime_store::Store;
@@ -24,11 +24,17 @@ pub struct AnalysisCore {
     pub chapters: Vec<Chapter>,
 }
 
-/// 解码整文件为单声道 → 静音结构 → 叮咚 → 两级章节。
-pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCore> {
-    progress("解码音频…");
+/// 16 kHz 转写输入 WAV 的缓存路径（Whisper 只吃 16 kHz 单声道）。
+pub fn wav_16k_path(audio: &Path) -> PathBuf {
+    paths::cache_dir().join(format!("{}.16k.wav", paths::cache_key(audio)))
+}
+
+/// 解码整文件为**原生采样率单声道**。
+///
+/// 返回的样本常驻内存（15 分钟 48k 素材约 170 MB），仅供需要完整波形的
+/// 一次性分析/转写使用；调用方用完请尽快 drop，**不要**长期持有。
+fn decode_mono(path: &Path) -> Result<(Vec<f32>, AudioInfo)> {
     let info = lime_audio::probe(path)?;
-    let params = AnalyzeParams::default();
     let mut dec = lime_audio::decode::Decoder::open(path)?;
     let channels = dec.channels;
     let mut mono: Vec<f32> = Vec::with_capacity(info.duration_ms as usize * 8);
@@ -41,6 +47,20 @@ pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCo
             }
         }
     }
+    Ok((mono, info))
+}
+
+/// 解码一次 → 静音结构 + 叮咚 + 两级章节，并把整段单声道一并返回。
+///
+/// 返回单声道是为了让转写复用这次解码（Whisper 需要 16 kHz 音频），
+/// 从而**避免重复解码**。样本较大，调用方应尽快写盘/转写并释放。
+pub fn analyze_with_mono(
+    path: &Path,
+    mut progress: impl FnMut(&str),
+) -> Result<(AnalysisCore, Vec<f32>)> {
+    progress("解码音频…");
+    let (mono, info) = decode_mono(path)?;
+    let params = AnalyzeParams::default();
 
     progress("检测静音结构…");
     let env = energy_envelope(&mono, info.sample_rate, &params);
@@ -54,13 +74,114 @@ pub fn analyze(path: &Path, mut progress: impl FnMut(&str)) -> Result<AnalysisCo
     progress("构建章节…");
     let chapters = build_chapters(&structure, &[], &chimes, &params);
 
-    Ok(AnalysisCore {
-        path: path.to_path_buf(),
-        info,
-        structure,
-        chimes,
-        chapters,
-    })
+    Ok((
+        AnalysisCore {
+            path: path.to_path_buf(),
+            info,
+            structure,
+            chimes,
+            chapters,
+        },
+        mono,
+    ))
+}
+
+/// 只做切分：整段单声道在函数返回前即被释放，不常驻内存。
+/// 供 `--analyze` / `--assert` 等诊断路径使用。
+pub fn analyze(path: &Path, progress: impl FnMut(&str)) -> Result<AnalysisCore> {
+    let (core, mono) = analyze_with_mono(path, progress)?;
+    drop(mono);
+    Ok(core)
+}
+
+/// 切分并顺手把 16 kHz 转写输入写进缓存：后续「转写」无需二次解码。
+/// GUI 打开文件即调用它（GUI 的核心用途就是逐词字幕，故值得提前生成）。
+pub fn analyze_and_export_wav(path: &Path, progress: impl FnMut(&str)) -> Result<AnalysisCore> {
+    let (core, mono) = analyze_with_mono(path, progress)?;
+    let wav = wav_16k_path(&core.path);
+    if !wav.is_file() {
+        // 只是为了给转写省一次解码，失败不应连带切分一起失败：
+        // 删掉半成品，转写阶段会用 export_16k_wav 重新生成。
+        if let Err(e) = dump_16k_wav(&mono, core.info.sample_rate, &wav) {
+            eprintln!("[limelisten] 16 kHz 转写输入导出失败（转写时将重试）: {e}");
+            let _ = std::fs::remove_file(&wav);
+        }
+    }
+    drop(mono);
+    Ok(core)
+}
+
+/// 把原生采样率单声道样本流式转成 16 kHz WAV 的写入器。
+///
+/// 内存只与单块输出有关，**不随音频时长增长**。
+struct Resample16k {
+    writer: lime_audio::render::WavStreamWriter,
+    resampler: Option<LinearResampler>,
+    pending: Vec<f32>,
+    out_buf: Vec<f32>,
+}
+
+impl Resample16k {
+    fn new(out: &Path, src_rate: u32) -> Result<Self> {
+        const TARGET: u32 = 16_000;
+        Ok(Self {
+            writer: lime_audio::render::WavStreamWriter::create(out, 1, TARGET)?,
+            resampler: (src_rate != TARGET).then(|| LinearResampler::new(src_rate, TARGET, 1)),
+            pending: Vec::new(),
+            out_buf: Vec::new(),
+        })
+    }
+
+    fn push(&mut self, mono: &[f32]) -> Result<()> {
+        let Some(r) = self.resampler.as_mut() else {
+            self.writer.write(mono)?;
+            return Ok(());
+        };
+        self.pending.extend_from_slice(mono);
+        loop {
+            let want = r.max_output_frames(self.pending.len()).min(16_384);
+            if want < 2 {
+                break;
+            }
+            self.out_buf.resize(want, 0.0);
+            let consumed = r.process(&self.pending, &mut self.out_buf);
+            if consumed == 0 {
+                break;
+            }
+            self.writer.write(&self.out_buf)?;
+            self.pending.drain(..consumed);
+        }
+        Ok(())
+    }
+
+    fn finish(self) -> Result<()> {
+        self.writer.finish()?;
+        Ok(())
+    }
+}
+
+/// 流式解码源音频 → 重采样为 16 kHz 单声道 WAV。
+///
+/// 与「先解出整段原生单声道再转换」相比，这里内存不随时长增长，
+/// 用于转写缓存缺失时的兜底生成。
+pub fn export_16k_wav(path: &Path, out: &Path) -> Result<()> {
+    let info = lime_audio::probe(path)?;
+    let mut dec = lime_audio::decode::Decoder::open(path)?;
+    let channels = dec.channels;
+    let mut sink = Resample16k::new(out, info.sample_rate)?;
+    let mut mono: Vec<f32> = Vec::new();
+    while let Some(buf) = dec.next_packet()? {
+        mono.clear();
+        if channels <= 1 {
+            mono.extend_from_slice(buf);
+        } else {
+            for frame in buf.chunks(channels) {
+                mono.push(frame.iter().sum::<f32>() / channels as f32);
+            }
+        }
+        sink.push(&mono)?;
+    }
+    sink.finish()
 }
 
 /// 当前转写管线的指纹（模型 + 解码参数 + 语言）。
@@ -89,31 +210,13 @@ pub fn asr_model_label() -> String {
 }
 
 /// 把已解码的单声道样本写成 16 kHz wav（Whisper 要求）。
+/// 输出流式写盘，不会在内存里再堆一份整段 16k 样本。
 pub fn dump_16k_wav(mono: &[f32], src_rate: u32, out: &Path) -> Result<()> {
-    let target = 16_000u32;
-    let samples: Vec<f32> = if src_rate == target {
-        mono.to_vec()
-    } else {
-        let mut r = LinearResampler::new(src_rate, target, 1);
-        let out_frames = (mono.len() as f64 * target as f64 / src_rate as f64) as usize;
-        let mut y = vec![0.0f32; out_frames];
-        let mut consumed = 0usize;
-        let mut done = 0usize;
-        while done < out_frames {
-            let want = (out_frames - done).min(16_384);
-            let need = r.needed_input_frames(want).min(mono.len() - consumed);
-            if need < 2 {
-                break;
-            }
-            let c = r.process(&mono[consumed..consumed + need], &mut y[done..done + want]);
-            consumed += c;
-            done += want;
-        }
-        y.truncate(done);
-        y
-    };
-    write_wav(out, &samples, 1, target)?;
-    Ok(())
+    let mut sink = Resample16k::new(out, src_rate)?;
+    for chunk in mono.chunks(16_384) {
+        sink.push(chunk)?;
+    }
+    sink.finish()
 }
 
 /// 完整转写：16k wav → whisper 逐词 → 时间戳吸附 → 句子重组 → 归属章节
@@ -129,7 +232,6 @@ pub struct Transcript {
 
 pub fn transcribe(
     core: &AnalysisCore,
-    mono: &[f32],
     mut progress: impl FnMut(&str, f32),
 ) -> Result<Transcript> {
     let exe = paths::find_whisper_exe()
@@ -138,10 +240,12 @@ pub fn transcribe(
         .ok_or_else(|| anyhow!("找不到 ggml 模型（请放到 models/ 目录）"))?;
 
     let key = paths::cache_key(&core.path);
-    let wav = paths::cache_dir().join(format!("{key}.16k.wav"));
+    let wav = wav_16k_path(&core.path);
     if !wav.is_file() {
+        // 缓存不存在（例如直接从 .limed / 本地库秒开，没跑过切分）：流式解码一次生成，
+        // 不经过整段原生单声道，内存不随时长增长。
         progress("导出 16 kHz 音频…", 0.02);
-        dump_16k_wav(mono, core.info.sample_rate, &wav)?;
+        export_16k_wav(&core.path, &wav)?;
     }
 
     progress("Whisper 转写中…", 0.05);
@@ -380,11 +484,10 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
 
 /// 只跑 ASR 链路（不启 GUI）：打印前 N 句 + 吸附前后对比
 pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
-    let mut core = analyze(Path::new(file), |m| eprintln!("[analysis] {m}"))?;
-    // 重新解码取单声道样本（避免 analyze 返回值过大）
-    let info = crate::cli::analyze_mono(Path::new(file))?;
+    // 单次解码：analyze_and_export_wav 顺带生成 16 kHz 转写输入，转写阶段不再解码
+    let mut core = analyze_and_export_wav(Path::new(file), |m| eprintln!("[analysis] {m}"))?;
     let t0 = std::time::Instant::now();
-    let tr = transcribe(&core, &info.0, |m, p| eprintln!("[asr {:.0}%] {m}", p * 100.0))?;
+    let tr = transcribe(&core, |m, p| eprintln!("[asr {:.0}%] {m}", p * 100.0))?;
     println!(
         "转写完成：{} 原始词 → {} 吸附词 → {} 句，地标对数 {}，用时 {:?}",
         tr.raw_words.len(),
@@ -489,24 +592,6 @@ pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
     Ok(())
 }
 
-/// 解码为单声道样本（分析/转写共用）
-pub fn analyze_mono(path: &Path) -> Result<(Vec<f32>, u32)> {
-    let info = lime_audio::probe(path)?;
-    let mut dec = lime_audio::decode::Decoder::open(path)?;
-    let channels = dec.channels;
-    let mut mono: Vec<f32> = Vec::with_capacity(info.duration_ms as usize * 8);
-    while let Some(buf) = dec.next_packet()? {
-        if channels <= 1 {
-            mono.extend_from_slice(buf);
-        } else {
-            for frame in buf.chunks(channels) {
-                mono.push(frame.iter().sum::<f32>() / channels as f32);
-            }
-        }
-    }
-    Ok((mono, info.sample_rate))
-}
-
 pub fn fmt_ms(ms: u64) -> String {
     let total = ms / 1000;
     let (m, s) = (total / 60, total % 60);
@@ -594,12 +679,11 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         return Err(anyhow!("音频文件不存在: {file}"));
     }
     println!("==== 开始预处理并打包 .limed 缓存: {} ====", path.display());
-    let mut core = analyze(path, |m| println!("  [切分] {m}"))?;
-    let (mono, _) = analyze_mono(path)?;
+    let mut core = analyze_and_export_wav(path, |m| println!("  [切分] {m}"))?;
 
     let sentences = {
         println!("  正在执行 Whisper 逐词转写与时间戳吸附...");
-        let tr = transcribe(&core, &mono, |m, p| {
+        let tr = transcribe(&core, |m, p| {
             println!("    [转写进度 {:.0}%] {m}", p * 100.0);
         })?;
         // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料（降级为「第 N 遍」）
@@ -786,7 +870,7 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         ("tiny", "Tiny (.en)"),
     ];
 
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let threads = lime_asr::default_threads();
     let mut results = Vec::new();
 
     for (spec, label) in &models {
@@ -809,8 +893,8 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         let out_base = paths::cache_dir().join(format!("bench_{spec}"));
         let start = std::time::Instant::now();
 
-        let mut child = std::process::Command::new(&exe)
-            .arg("-m")
+        let mut cmd = std::process::Command::new(&exe);
+        cmd.arg("-m")
             .arg(&model_path)
             .arg("-f")
             .arg(&test_wav)
@@ -828,7 +912,14 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
             .arg("-of")
             .arg(&out_base)
             .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS：与真实转写同口径
+            cmd.creation_flags(0x0800_0000 | 0x0000_4000);
+        }
+        let mut child = cmd
             .spawn()
             .map_err(|e| anyhow!("spawn whisper failed: {e}"))?;
 
@@ -968,3 +1059,35 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 流式导出 16 kHz 转写输入：采样率/时长正确（内存不随音频时长增长）。
+    #[test]
+    fn export_16k_wav_streaming() {
+        let dir = std::env::temp_dir();
+        let pid = std::process::id();
+        let src = dir.join(format!("lime_export_src_{pid}.wav"));
+        let dst = dir.join(format!("lime_export_dst_{pid}.wav"));
+        let rate = 48_000u32;
+        let secs = 3u32;
+        let tone: Vec<f32> = (0..rate * secs)
+            .map(|i| 0.4 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / rate as f32).sin())
+            .collect();
+        lime_audio::render::write_wav(&src, &tone, 1, rate).expect("write src");
+
+        export_16k_wav(&src, &dst).expect("export");
+        let info = lime_audio::probe(&dst).expect("probe dst");
+        assert_eq!(info.sample_rate, 16_000);
+        assert_eq!(info.channels, 1);
+        assert!(
+            (info.duration_ms as i64 - secs as i64 * 1000).abs() < 20,
+            "duration {} ms",
+            info.duration_ms
+        );
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&dst);
+    }
+}

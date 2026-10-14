@@ -126,21 +126,45 @@ pub fn render(path: &Path, opt: &RenderOptions) -> Result<Vec<f32>> {
     Ok(out)
 }
 
+/// 流式 16-bit PCM WAV 写入器。
+///
+/// 与 `write_wav` 不同，它**逐块写盘**，不需要把整段样本留在内存里——
+/// 这正是把长音频转成 16 kHz 转写输入时该走的路子（15 分钟素材可达数十 MB）。
+pub struct WavStreamWriter {
+    inner: hound::WavWriter<std::io::BufWriter<std::fs::File>>,
+}
+
+impl WavStreamWriter {
+    pub fn create(path: &Path, channels: u16, rate: u32) -> Result<Self> {
+        let spec = hound::WavSpec {
+            channels,
+            sample_rate: rate,
+            bits_per_sample: 16,
+            sample_format: hound::SampleFormat::Int,
+        };
+        let inner = hound::WavWriter::create(path, spec).map_err(|e| Error::Io(e.to_string()))?;
+        Ok(Self { inner })
+    }
+
+    /// 追加一段交错 f32（自动 clamp 到 16-bit PCM）。
+    pub fn write(&mut self, samples: &[f32]) -> Result<()> {
+        for s in samples {
+            let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
+            self.inner.write_sample(v).map_err(|e| Error::Io(e.to_string()))?;
+        }
+        Ok(())
+    }
+
+    pub fn finish(self) -> Result<()> {
+        self.inner.finalize().map_err(|e| Error::Io(e.to_string()))
+    }
+}
+
 /// 写 16-bit PCM WAV（给自动化验收与“原声切片”用）。
 pub fn write_wav(path: &Path, samples: &[f32], channels: u16, rate: u32) -> Result<()> {
-    let spec = hound::WavSpec {
-        channels,
-        sample_rate: rate,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut w = hound::WavWriter::create(path, spec).map_err(|e| Error::Io(e.to_string()))?;
-    for s in samples {
-        let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-        w.write_sample(v).map_err(|e| Error::Io(e.to_string()))?;
-    }
-    w.finalize().map_err(|e| Error::Io(e.to_string()))?;
-    Ok(())
+    let mut w = WavStreamWriter::create(path, channels, rate)?;
+    w.write(samples)?;
+    w.finish()
 }
 
 /// 用零交叉率估主频（自动化验收用，避免引入 FFT 依赖）。
@@ -152,4 +176,33 @@ pub fn dominant_freq_zero_cross(x: &[f32], rate: u32) -> f32 {
         }
     }
     zc as f32 * rate as f32 / (2.0 * x.len().max(1) as f32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 流式写入应等价于一次性写入（写盘格式与样本值一致）。
+    #[test]
+    fn stream_writer_roundtrip() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("lime_stream_wav_{}.wav", std::process::id()));
+        let src: Vec<f32> = (0..1000).map(|i| (i as f32 / 1000.0) * 1.6 - 0.8).collect();
+        {
+            let mut w = WavStreamWriter::create(&path, 1, 16_000).expect("create");
+            for chunk in src.chunks(64) {
+                w.write(chunk).expect("write");
+            }
+            w.finish().expect("finish");
+        }
+        let mut r = hound::WavReader::open(&path).expect("open");
+        assert_eq!(r.spec().sample_rate, 16_000);
+        assert_eq!(r.spec().channels, 1);
+        let got: Vec<i16> = r.samples::<i16>().map(|s| s.unwrap()).collect();
+        assert_eq!(got.len(), src.len());
+        for (a, b) in src.iter().zip(got.iter()) {
+            assert_eq!((a.clamp(-1.0, 1.0) * 32767.0) as i16, *b);
+        }
+        let _ = std::fs::remove_file(&path);
+    }
 }

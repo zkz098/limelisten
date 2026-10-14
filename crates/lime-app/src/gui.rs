@@ -7,7 +7,9 @@
 //! - 字幕导出：支持 SRT、LRC、TXT 导出；
 //! - 断点续播与统计：自动存取进度，播放/循环写入统计。
 
-use crate::cli::{analyze, analyze_mono, assign_sentences_to_chapters, transcribe, AnalysisCore};
+use crate::cli::{
+    analyze_and_export_wav, assign_sentences_to_chapters, transcribe, AnalysisCore,
+};
 use crate::paths;
 use crate::{ChapterRow, MainWindow, MediaRow, ModelBenchmarkRow, WhisperBuildRow, WordCell};
 use crossbeam_channel::{unbounded, Receiver, Sender};
@@ -27,7 +29,7 @@ use std::sync::Arc;
 
 enum Msg {
     Status(String),
-    AnalyzeDone(Box<AnalysisCore>, Box<Vec<f32>>, u32),
+    AnalyzeDone(Box<AnalysisCore>),
     TranscribeProgress(f32),
     TranscribeDone {
         sentences: Vec<Sentence>,
@@ -71,8 +73,6 @@ struct GuiState {
     media_id: Option<i64>,
     path: Option<PathBuf>,
     core: Option<AnalysisCore>,
-    mono: Vec<f32>,
-    mono_rate: u32,
     sentences: Vec<Sentence>,
     /// 当前句的词（点击跳转用）
     current_words: Vec<Word>,
@@ -102,8 +102,6 @@ impl Default for GuiState {
             media_id: None,
             path: None,
             core: None,
-            mono: Vec::new(),
-            mono_rate: 44100,
             sentences: Vec::new(),
             current_words: Vec::new(),
             engine: None,
@@ -520,6 +518,8 @@ fn extract_whisper_zip(zip: &Path, dest: &Path) -> (bool, String) {
 }
 
 fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
+    // 测速与转写同口径：留一个核给 UI，线程降到 Below Normal
+    lime_asr::set_current_thread_below_normal();
     let _ = tx.send(Msg::Status("准备测速…".into()));
     let sample_str = audio_path.as_deref().and_then(|p| p.to_str());
     let (test_wav, audio_dur_s) = match crate::cli::prepare_benchmark_wav(sample_str) {
@@ -542,7 +542,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
         }
     };
 
-    let threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
+    let threads = lime_asr::default_threads();
     let mut best_model: Option<(&'static str, f64, bool)> = None;
 
     for meta in paths::MODEL_SPECS {
@@ -591,7 +591,8 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
+            // CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS
+            cmd.creation_flags(0x0800_0000 | 0x0000_4000);
         }
 
         let mut child = match cmd.spawn() {
@@ -860,34 +861,31 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             ui.set_transcribe_progress(0.0);
             let tx2 = tx.clone();
             std::thread::spawn(move || {
-                match analyze_mono(&core.path) {
-                    Ok((mono, _)) => {
-                        let r = transcribe(&core, &mono, |m, p| {
-                            let _ = tx2.send(Msg::Status(m.to_string()));
-                            let _ = tx2.send(Msg::TranscribeProgress(p));
+                // 长任务：降优先级，别把 UI / 音频回调抢卡
+                lime_asr::set_current_thread_below_normal();
+                // 不再重新解码：16 kHz 转写输入已在切分阶段落缓存
+                // （见 `analyze_and_export_wav`）；缺失时 transcribe 会自己流式生成。
+                let r = transcribe(&core, |m, p| {
+                    let _ = tx2.send(Msg::Status(m.to_string()));
+                    let _ = tx2.send(Msg::TranscribeProgress(p));
+                });
+                match r {
+                    Ok(t) => {
+                        // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料
+                        let rep = lime_analyze::merge_repeated_materials_with(
+                            &core.chapters,
+                            &t.sentences,
+                            &lime_analyze::RepeatParams::default(),
+                        );
+                        let mut sents = t.sentences;
+                        assign_sentences_to_chapters(&mut sents, &rep.chapters);
+                        let _ = tx2.send(Msg::TranscribeDone {
+                            sentences: sents,
+                            chapters: rep.chapters,
                         });
-                        match r {
-                            Ok(t) => {
-                                // 语义兜底：同一材料被朗读两遍时，把后一遍并回前一份材料
-                                let rep = lime_analyze::merge_repeated_materials_with(
-                                    &core.chapters,
-                                    &t.sentences,
-                                    &lime_analyze::RepeatParams::default(),
-                                );
-                                let mut sents = t.sentences;
-                                assign_sentences_to_chapters(&mut sents, &rep.chapters);
-                                let _ = tx2.send(Msg::TranscribeDone {
-                                    sentences: sents,
-                                    chapters: rep.chapters,
-                                });
-                            }
-                            Err(e) => {
-                                let _ = tx2.send(Msg::Error(format!("转写失败: {e}")));
-                            }
-                        }
                     }
                     Err(e) => {
-                        let _ = tx2.send(Msg::Error(format!("解码失败: {e}")));
+                        let _ = tx2.send(Msg::Error(format!("转写失败: {e}")));
                     }
                 }
                 busy.store(false, Ordering::SeqCst);
@@ -1626,7 +1624,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         st.sentences = sentences;
                         ui.set_status(summary.into());
                     }
-                    Msg::AnalyzeDone(core, mono, rate) => {
+                    Msg::AnalyzeDone(core) => {
                         let core = *core;
                         let fresh = canonical_chapters(&core.chapters);
                         let mut st = state.borrow_mut();
@@ -1657,8 +1655,6 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                             chimes: core.chimes,
                             chapters,
                         });
-                        st.mono = *mono;
-                        st.mono_rate = rate;
                         if let (Some(eng), Some((a, b))) = (st.engine.as_ref(), range) {
                             eng.set_loop(a, b, st.loop_count);
                             eng.set_stop_at(if st.auto_pause { b } else { 0 });
@@ -2060,18 +2056,17 @@ fn spawn_analyze(
     }
     std::thread::spawn(move || {
         let tx2 = tx.clone();
-        let r = analyze(&path, |m| {
+        // 长任务（解码 + DSP）：降优先级，别把 UI / 音频回调抢卡
+        lime_asr::set_current_thread_below_normal();
+        // 单次解码：顺带把 16 kHz 转写输入写进缓存，转写阶段无需二次解码。
+        // 整段单声道只在 analyze_and_export_wav 内部存活，返回前即释放，不常驻内存。
+        let r = analyze_and_export_wav(&path, |m| {
             let _ = tx2.send(Msg::Status(m.to_string()));
         });
         match r {
-            Ok(core) => match analyze_mono(&core.path) {
-                Ok((mono, rate)) => {
-                    let _ = tx.send(Msg::AnalyzeDone(Box::new(core), Box::new(mono), rate));
-                }
-                Err(e) => {
-                    let _ = tx.send(Msg::Error(format!("解码失败：{e}")));
-                }
-            },
+            Ok(core) => {
+                let _ = tx.send(Msg::AnalyzeDone(Box::new(core)));
+            }
             Err(e) => {
                 let _ = tx.send(Msg::Error(format!("切分失败：{e}")));
             }
