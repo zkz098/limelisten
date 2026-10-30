@@ -34,7 +34,7 @@ jobs:
       - name: Install Linux audio & GUI dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -64,7 +64,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev xvfb
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev xvfb
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
