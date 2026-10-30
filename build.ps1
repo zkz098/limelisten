@@ -6,22 +6,23 @@
 #
 # 用法：  .\build.ps1              # cargo build
 #         .\build.ps1 run          # cargo run
-#         .\build.ps1 build --release   # 发布版（自带静态 CRT，见下）
+#         .\build.ps1 build --release   # 发布版（自带静态 CRT 与 x86-64-v3，见下）
 #
-# 静态 CRT（+crt-static）：release 产物把 C/C++ 运行库静态链进 exe，不再依赖
-# vcruntime140.dll / msvcp140.dll（默认的 MSVC 目标是动态 CRT），这样绿色便携包拷到
-# 没装 VC++ 运行时的机器也能直接跑。debug 构建不加，保持增量编译速度。
+# 静态 CRT（+crt-static）与微架构目标（target-cpu=x86-64-v3）：
+# release 产物把 C/C++ 运行库静态链进 exe，不再依赖 vcruntime140.dll / msvcp140.dll；
+# 同时指定 target-cpu=x86-64-v3，启用 AVX2/FMA/BMI2/LZCNT 指令集加速音频重采样、
+# 变速拉伸与 DSP 计算。debug 构建不加，保持增量编译速度与通用调试兼容性。
 $ErrorActionPreference = 'Stop'
 
 $CargoArgs = @($args)
 if (-not $CargoArgs -or $CargoArgs.Count -eq 0) { $CargoArgs = @('build') }
 
-# release 专属编译参数：静态 CRT。注：只认命令行里的 --release，不靠 profile 名推断。
+# release 专属编译参数：静态 CRT 与 x86-64-v3。注：只认命令行里的 --release，不靠 profile 名推断。
 $IsRelease = $CargoArgs -contains '--release'
 if ($IsRelease) {
-    $StaticCrt = '-C target-feature=+crt-static'
-    if ($env:RUSTFLAGS) { $env:RUSTFLAGS = "$env:RUSTFLAGS $StaticCrt" } else { $env:RUSTFLAGS = $StaticCrt }
-    Write-Host "== release 静态 CRT: RUSTFLAGS=$env:RUSTFLAGS"
+    $ReleaseFlags = '-C target-feature=+crt-static -C target-cpu=x86-64-v3'
+    if ($env:RUSTFLAGS) { $env:RUSTFLAGS = "$env:RUSTFLAGS $ReleaseFlags" } else { $env:RUSTFLAGS = $ReleaseFlags }
+    Write-Host "== release 专属参数 (静态 CRT + x86-64-v3): RUSTFLAGS=$env:RUSTFLAGS"
 }
 
 $vcvars = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\*\*\VC\Auxiliary\Build\vcvars64.bat" -ErrorAction SilentlyContinue |
