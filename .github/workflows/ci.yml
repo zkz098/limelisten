@@ -64,7 +64,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libxkbcommon-dev xvfb
 
       - name: Rust Cache
         uses: Swatinem/rust-cache@v2
@@ -72,5 +72,10 @@ jobs:
       - name: Cargo check
         run: cargo check --workspace --all-targets
 
-      - name: Run unit & integration tests
+      - name: Run unit & integration tests (Linux)
+        if: runner.os == 'Linux'
+        run: xvfb-run --auto-servernum cargo test --workspace --all-targets --verbose
+
+      - name: Run unit & integration tests (Windows)
+        if: runner.os != 'Linux'
         run: cargo test --workspace --all-targets --verbose
