@@ -65,6 +65,7 @@ component RiButton inherits Rectangle {
         padding-right: 10px;
         spacing: 5px;
         alignment: center;
+        cross-axis-alignment: center;
 
         if root.icon != "" : Text {
             font-family: "remixicon";
@@ -238,7 +239,7 @@ component ExerciseView inherits Rectangle {
         HorizontalLayout {
             height: 32px;
             spacing: 10px;
-            alignment: center;
+            cross-axis-alignment: center;
 
             RiIcon {
                 icon: Ri.survey;
@@ -610,7 +611,7 @@ export component MainWindow inherits Window {
     icon: @image-url("assets/logo.png");
     preferred-width: 1320px;
     preferred-height: 860px;
-    min-width: 1000px;
+    min-width: 1140px;
     min-height: 700px;
     background: #f1f5f9;
 
@@ -654,7 +655,7 @@ export component MainWindow inherits Window {
 
     // ---- 关于模态框 ----
     in-out property <bool> show-about-modal: false;
-    in-out property <string> app-version: "0.1.0";
+    in-out property <string> app-version: "0.1.1";
     in-out property <string> github-url: "https://github.com/zkz098/limelisten";
     in-out property <string> license-name: "GPL-3.0-or-later";
 
@@ -747,7 +748,7 @@ export component MainWindow inherits Window {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 10px;
-                alignment: center;
+                cross-axis-alignment: center;
 
                 // Logo：真图标 ui/assets/logo.png（取自项目根目录 logo.png，黑底已抠为透明底；
                 // 正方形母版 256x256，图形本体上下各留 135/1215 的空白，故外面给 36x36 的盒子）
@@ -756,7 +757,7 @@ export component MainWindow inherits Window {
                 HorizontalLayout {
                     horizontal-stretch: 0;
                     spacing: 8px;
-                    alignment: center;
+                    cross-axis-alignment: center;
 
                     Image {
                         source: @image-url("assets/logo.png");
@@ -859,7 +860,10 @@ export component MainWindow inherits Window {
                 Rectangle {
                     horizontal-stretch: 1;
                     HorizontalLayout {
+                        alignment: end;
                         padding-left: 8px;
+                        padding-right: 4px;
+                        cross-axis-alignment: center;
                         Text {
                             text: root.status;
                             color: #475569;
@@ -1254,7 +1258,7 @@ export component MainWindow inherits Window {
                         HorizontalLayout {
                             height: 28px;
                             spacing: 8px;
-                            alignment: center;
+                            cross-axis-alignment: center;
 
                             if !root.playing : RiIcon {
                                 icon: Ri.music;
@@ -1624,7 +1628,7 @@ export component MainWindow inherits Window {
 
                 // 标题栏
                 HorizontalLayout {
-                    alignment: center;
+                    cross-axis-alignment: center;
                     VerticalLayout {
                         horizontal-stretch: 1;
                         spacing: 3px;
@@ -1691,6 +1695,13 @@ export component MainWindow inherits Window {
                                     color: root.whisper-installed ? #15803d : #9a3412;
                                     overflow: elide;
                                 }
+                            }
+
+                            if !root.whisper-installed && root.whisper-status == "缺少 VC++ 运行库 (x64) · 需安装 VC_redist.x64" : RiButton {
+                                icon: Ri.download;
+                                text: "下载 VC++ 运行库";
+                                btn-height: 26px;
+                                clicked => { root.open-url("https://aka.ms/vs/17/release/vc_redist.x64.exe"); }
                             }
                         }
 

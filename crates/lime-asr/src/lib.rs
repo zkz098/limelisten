@@ -114,9 +114,11 @@ impl WhisperCli {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
-            // 低端机上别让转写把 UI 渲染 / 音频回调一起抢死：子进程降到 Below Normal
+            // CREATE_NO_WINDOW (0x0800_0000): 彻底避免 Windows GUI 模式下转写时弹出黑框终端窗口
+            // BELOW_NORMAL_PRIORITY_CLASS (0x0000_4000): 低端机上别让转写把 UI 渲染 / 音频回调抢死
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
             const BELOW_NORMAL_PRIORITY_CLASS: u32 = 0x0000_4000;
-            cmd.creation_flags(BELOW_NORMAL_PRIORITY_CLASS);
+            cmd.creation_flags(CREATE_NO_WINDOW | BELOW_NORMAL_PRIORITY_CLASS);
         }
         let mut child = cmd
             .spawn()
@@ -136,6 +138,14 @@ impl WhisperCli {
         }
         let status = child.wait().map_err(|e| Error::Asr(e.to_string()))?;
         if !status.success() {
+            #[cfg(windows)]
+            if let Some(code) = status.code() {
+                if code == 0xC0000135_u32 as i32 || code == -1073741515 {
+                    return Err(Error::Asr(
+                        "whisper-cli 启动失败 (0xC0000135: 找不到指定模块)。当前系统未安装 Microsoft Visual C++ 2015-2022 运行库 (x64)，请访问 https://aka.ms/vs/17/release/vc_redist.x64.exe 下载安装后重试。".into(),
+                    ));
+                }
+            }
             return Err(Error::Asr(format!("whisper-cli exited with {status}")));
         }
         let json = json_path(out_base);

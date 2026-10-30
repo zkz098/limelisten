@@ -36,7 +36,7 @@ fn package_dist(raw_args: &[String]) {
     }
 
     let version = version
-        .unwrap_or_else(|| env::var("LIMELISTEN_VERSION").unwrap_or_else(|_| "0.1.0".to_string()));
+        .unwrap_or_else(|| env::var("LIMELISTEN_VERSION").unwrap_or_else(|_| "0.1.1".to_string()));
     let version = version.trim_start_matches('v');
 
     let os_str = if cfg!(target_os = "windows") {
@@ -117,7 +117,9 @@ fn package_dist(raw_args: &[String]) {
 ====================
 1. 运行可执行程序即可直接启动 LimeListen。
 2. Whisper 转写引擎与 AI 语音模型可在软件界面「测速与模型」面板中一键下载。
-3. 所有运行数据、库索引与模型将保存在本软件同级目录下，不污染系统盘。
+3. 若使用语音转写功能，需确保系统已安装 Microsoft Visual C++ 2015-2022 运行库 (x64)：
+   官方下载地址：https://aka.ms/vs/17/release/vc_redist.x64.exe
+4. 所有运行数据、库索引与模型将保存在本软件同级目录下，不污染系统盘。
 "#;
     let _ = fs::write(pkg_dir.join("首次使用说明.txt"), readme_content);
 

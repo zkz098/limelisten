@@ -257,11 +257,37 @@ fn get_whisper_build_rows(state: &GuiState) -> Vec<WhisperBuildRow> {
         .collect()
 }
 
+#[cfg(windows)]
+fn check_whisper_runnable(exe: &Path) -> Result<(), &'static str> {
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new(exe);
+    cmd.arg("-h")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(0x0800_0000);
+    match cmd.status() {
+        Ok(status) => {
+            let code = status.code();
+            if code == Some(0xC0000135_u32 as i32) || code == Some(-1073741515) {
+                return Err("缺少 VC++ 运行库 (x64)");
+            }
+            Ok(())
+        }
+        Err(_) => Err("无法启动转写引擎"),
+    }
+}
+
 fn refresh_whisper_ui(ui: &MainWindow, state: &GuiState) {
     let rows = get_whisper_build_rows(state);
     ui.set_whisper_builds(ModelRc::new(VecModel::from(rows)));
     match paths::find_whisper_exe() {
         Some(p) => {
+            #[cfg(windows)]
+            if let Err(msg) = check_whisper_runnable(&p) {
+                ui.set_whisper_installed(false);
+                ui.set_whisper_status(format!("{msg} · 需安装 VC_redist.x64").into());
+                return;
+            }
             ui.set_whisper_installed(true);
             ui.set_whisper_status(format!("已就绪 · {}", p.display()).into());
         }
@@ -636,7 +662,18 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
             match child.try_wait() {
                 Ok(Some(status)) => {
                     if !status.success() {
-                        child_err = Some(format!("exit: {status}"));
+                        #[cfg(windows)]
+                        if let Some(code) = status.code() {
+                            if code == 0xC0000135_u32 as i32 || code == -1073741515 {
+                                child_err = Some("缺少 VC++ 运行库".into());
+                            } else {
+                                child_err = Some(format!("exit: {status}"));
+                            }
+                        }
+                        #[cfg(not(windows))]
+                        {
+                            child_err = Some(format!("exit: {status}"));
+                        }
                     }
                     break;
                 }
