@@ -964,7 +964,8 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     ui.set_status("未打开音频".into());
                     return;
                 };
-                match Engine::new(&path) {
+                let pos = ui.get_position().max(0.0).round() as u64;
+                match Engine::new_at(&path, pos) {
                     Ok(eng) => {
                         state.borrow_mut().engine = Some(eng);
                         ui.set_status("就绪".into());
@@ -977,10 +978,15 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             }
             let st = state.borrow();
             if let Some(eng) = st.engine.as_ref() {
-                let (a, b) = st.range(ui.get_current().max(0) as usize).unwrap_or_else(|| st.whole_range());
+                let cur = ui.get_current();
+                let (a, b) = if cur >= 0 {
+                    st.range(cur as usize).unwrap_or_else(|| st.whole_range())
+                } else {
+                    st.whole_range()
+                };
                 eng.set_speed(st.speed);
                 eng.set_loop(a, b, st.loop_count);
-                eng.set_stop_at(if st.auto_pause { b } else { 0 });
+                eng.set_stop_at(if st.auto_pause && cur >= 0 { b } else { 0 });
                 eng.toggle();
                 ui.set_playing(eng.shared().playing());
             }
@@ -1166,12 +1172,13 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         ui.on_click_word(move |idx| {
-            let Some(_ui) = ui_weak.upgrade() else { return };
+            let Some(ui) = ui_weak.upgrade() else { return };
             let st = state.borrow();
             if let Some(w) = st.current_words.get(idx.max(0) as usize) {
                 if let Some(eng) = st.engine.as_ref() {
                     eng.seek_ms(w.start_ms);
                 }
+                ui.set_position(w.start_ms as f32);
             }
         });
     }
@@ -1315,10 +1322,20 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             if cur_idx < 0 {
                 return;
             }
-            let st = state.borrow();
-            let Some(range) = st.range(cur_idx as usize) else { return };
+            let (path, range) = {
+                let st = state.borrow();
+                let Some(path) = st.path.clone() else { return };
+                let Some(range) = st.range(cur_idx as usize) else { return };
+                (path, range)
+            };
             let end = range.1;
             let start = end.saturating_sub(2000).max(range.0);
+            if state.borrow().engine.is_none() {
+                if let Ok(eng) = Engine::new_at(&path, start) {
+                    state.borrow_mut().engine = Some(eng);
+                }
+            }
+            let st = state.borrow();
             if let Some(eng) = st.engine.as_ref() {
                 eng.seek_ms(start);
                 eng.set_stop_at(end);

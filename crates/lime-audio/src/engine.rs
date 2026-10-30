@@ -110,6 +110,11 @@ pub struct Engine {
 impl Engine {
     /// 打开文件并建立输出流。`device_sample_rate`: None = 用文件的采样率（失败则退回默认配置）。
     pub fn new(path: &Path) -> Result<Self> {
+        Self::new_at(path, 0)
+    }
+
+    /// 打开文件并从指定的毫秒位置建立输出流。
+    pub fn new_at(path: &Path, start_pos_ms: u64) -> Result<Self> {
         let info = crate::probe(path)?;
         let host = cpal::default_host();
         let device = host
@@ -132,6 +137,8 @@ impl Engine {
         let shared = Arc::new(Shared::default());
         shared.speed_milli.store(1000, Relaxed);
         shared.duration_ms.store(info.duration_ms, Relaxed);
+        let start_pos_ms = start_pos_ms.min(info.duration_ms);
+        shared.pos_ms.store(start_pos_ms, Relaxed);
 
         let (tx, rx) = bounded::<(u64, Vec<f32>)>(QUEUE_BLOCKS);
         // 输出缓冲回收通道：回调消费完的 Vec 由此归还，供传输线程复用（避免每块 malloc/free）
@@ -149,7 +156,7 @@ impl Engine {
             .name("lime-transport".into())
             .spawn(move || {
                 if let Err(e) =
-                    worker_loop(&path_buf, &sh, tx, recycle_rx, cmd_rx, device_rate, device_channels)
+                    worker_loop(&path_buf, &sh, tx, recycle_rx, cmd_rx, device_rate, device_channels, start_pos_ms)
                 {
                     eprintln!("[lime-audio] transport 线程结束: {e}");
                 }
@@ -331,6 +338,7 @@ fn worker_loop(
     cmd: Receiver<Cmd>,
     device_rate: u32,
     device_channels: usize,
+    start_pos_ms: u64,
 ) -> Result<()> {
     let mut dec = Decoder::open(path)?;
     let src_rate = dec.sample_rate;
@@ -343,9 +351,13 @@ fn worker_loop(
         None
     };
     let mut playing = false;
-    let mut pending_seek: Option<u64> = None;
+    let mut pending_seek: Option<u64> = if start_pos_ms > 0 { Some(start_pos_ms) } else { None };
     let mut resume_at: Option<u64> = None;
-    let mut src_fed: u64 = 0;
+    let mut src_fed: u64 = if start_pos_ms > 0 {
+        (start_pos_ms as f64 / 1000.0 * src_rate as f64) as u64
+    } else {
+        0
+    };
     let mut gen = 0u64;
     // 启动/跳转后要丢弃的预热输出帧数（否则开头是拉伸器的高频垃圾）
     let mut skip_out: usize = stretch.warmup_frames();
@@ -637,7 +649,7 @@ mod tests {
         let sh = shared.clone();
         let p = path.clone();
         let worker = std::thread::spawn(move || {
-            worker_loop(&p, &sh, tx, recycle_rx, cmd_rx, 48_000, 1).unwrap();
+            worker_loop(&p, &sh, tx, recycle_rx, cmd_rx, 48_000, 1, 0).unwrap();
         });
 
         // 模拟回调：消费队列帧（计入 out_consumed），并把缓冲回收给 worker 复用
@@ -675,6 +687,53 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         assert!(shared.pos_ms() <= 1000, "seek 后位置 {} 未回退", shared.pos_ms());
+
+        let _ = cmd_tx.send(Cmd::Quit);
+        let _ = worker.join();
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// 验证以非零起点启动 worker_loop 时，播放位置直接继承设定值，不会被重置为 0。
+    #[test]
+    fn worker_loop_starts_at_specified_position() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("lime_engine_start_pos_test_{}.wav", std::process::id()));
+        write_test_wav(&path, 48_000, 3); // 3 秒音频
+
+        let shared = Arc::new(Shared::default());
+        shared.speed_milli.store(1000, Relaxed);
+        shared.duration_ms.store(3000, Relaxed);
+        shared.pos_ms.store(1000, Relaxed);
+
+        let (tx, rx) = bounded::<(u64, Vec<f32>)>(8);
+        let (recycle_tx, recycle_rx) = bounded::<Vec<f32>>(16);
+        let (cmd_tx, cmd_rx) = bounded::<Cmd>(8);
+        cmd_tx.send(Cmd::Play).unwrap();
+
+        let sh = shared.clone();
+        let p = path.clone();
+        let worker = std::thread::spawn(move || {
+            worker_loop(&p, &sh, tx, recycle_rx, cmd_rx, 48_000, 1, 1000).unwrap();
+        });
+
+        // 模拟回调消费
+        let mut got = 0usize;
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while std::time::Instant::now() < deadline {
+            match rx.recv_timeout(Duration::from_millis(300)) {
+                Ok((_g, v)) => {
+                    got += v.len();
+                    shared.out_consumed.fetch_add(v.len() as u64, Relaxed);
+                    let _ = recycle_tx.try_send(v);
+                }
+                Err(_) if shared.finished() => break,
+                Err(_) => {}
+            }
+        }
+        assert!(got > 0, "应产出帧");
+        let pos = shared.pos_ms();
+        // 初始起点为 1000 ms，最终位置必须 >= 1000 ms，绝不应回滚到 0
+        assert!(pos >= 1000, "初始位置被重置: {pos}");
 
         let _ = cmd_tx.send(Cmd::Quit);
         let _ = worker.join();
