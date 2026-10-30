@@ -2312,17 +2312,11 @@ export component MainWindow inherits Window {
                 }
 
                 // 多行输入框
-                Rectangle {
+                TextEdit {
                     height: 240px;
-                    background: #f8fafc;
-                    border-radius: 6px;
-                    border-width: 1px;
-                    border-color: #cbd5e1;
-
-                    TextEdit {
-                        text <=> root.exercise-import-text;
-                        font-size: 13px;
-                    }
+                    font-size: 13px;
+                    text <=> root.exercise-import-text;
+                    placeholder-text: "请在此粘贴或输入听力试题文本或 JSON...\n\n示例格式：\nText 1\n1. What is the woman doing?\nA. Driving a car.\nB. Walking in the park.\nC. Waiting for a bus.\n答案: C\n解析: 女士在车站。";
                 }
 
                 if root.exercise-import-error != "" : Text {

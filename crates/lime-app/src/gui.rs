@@ -2915,6 +2915,19 @@ mod tests {
     }
 
     #[test]
+    fn test_exercise_modal_state_and_text_binding() {
+        let ui = MainWindow::new().unwrap();
+        ui.set_show_exercise_modal(true);
+        assert!(ui.get_show_exercise_modal());
+
+        ui.set_exercise_import_text("Text 1\n1. Question\nA. Opt\n答案: A".into());
+        assert_eq!(
+            ui.get_exercise_import_text(),
+            "Text 1\n1. Question\nA. Opt\n答案: A"
+        );
+    }
+
+    #[test]
     fn test_exercise_pipeline_roundtrip() {
         let text = r#"
 Text 1
