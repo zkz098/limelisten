@@ -7,8 +7,7 @@ fn main() {
 /// exe 属性里的版本信息 + 资源管理器/快捷方式/任务栏显示的真图标（不用启动进程就能看到）。
 ///
 /// 用 embed-resource 而不是 winres/winresource：它会自己按 $RC → Win10 SDK 注册表 →
-/// vswhom → PATH 的顺序找 rc.exe，不会被「本机 VS18 探测不到」（见根目录 build.ps1 注释）
-/// 那个坑波及；非 Windows 构建时它会自己跳过。
+/// vswhom → PATH 的顺序找 rc.exe，保证 MSVC 环境探测鲁棒性；非 Windows 构建时它会自己跳过。
 fn embed_windows_resources() {
     #[cfg(windows)]
     {

@@ -179,7 +179,7 @@ UI↔后端：Slint 只读原子/共享状态，命令走 channel；UI 线程不
 
 ### P0 已完成部分（分析半段）—— 断言全绿
 
-命令：`build.ps1 build` 然后 `target\debug\limelisten.exe --assert samples\*.mp3`（exit 0 = 全绿）
+命令：`cargo xtask build` 然后 `target\debug\limelisten.exe --assert samples\*.mp3`（exit 0 = 全绿）
 
 | 文件 | A 边界定位 | B 章节合法性 | C 叮咚重合 | 结果 |
 |---|---|---|---|---|
@@ -194,7 +194,7 @@ C = 强叮咚与静音边界重合率 ≥ 80%。
 
 ### P0 已完成（分析半段 + 播放半段）—— 断言全绿
 
-命令：`build.ps1 build`，然后 `target\debug\limelisten.exe --assert samples\*.mp3`（exit 0 = 全绿）
+命令：`cargo xtask build`，然后 `target\debug\limelisten.exe --assert samples\*.mp3`（exit 0 = 全绿）
 
 | 文件 | A 边界定位 | B 章节合法性 | C 叮咚重合 | 结果 |
 |---|---|---|---|---|
@@ -210,7 +210,7 @@ GUI：无参数启动（已做 5 s 烟雾测试）。
 已实现：`lime-core`（领域模型）、`lime-analyze`（静音结构 + **叮咚检测** + 两级章节 + **时间戳吸附** + 11 个单测）、
 `lime-audio`（symphonia 解码 + **播放引擎** cpal/signalsmith-stretch + 离线渲染 + 3 个单测）、
 `lime-asr`（whisper-cli 驱动 + 逐词 JSON + 句子重组）、`lime-store`（SQLite schema/存取）、
-`lime-app`（Slint GUI + 四个 CLI 模式）、`ui/app.slint`、`build.ps1`。
+`lime-app`（Slint GUI + 四个 CLI 模式）、`ui/app.slint`、`xtask`。
 
 P0 剩余：题级修正 UI（微调/合并/拆分 + 边界试听）、SRT 导出、库管理（P1/P2）。
 | P1 库 | SQLite + 扫描 + 后台队列（当前插队）+ 缓存 + 进度/断点 | 50 文件批量不掉帧；重复打开秒开 |
