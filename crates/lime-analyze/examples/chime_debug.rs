@@ -3,15 +3,18 @@
 //! 用法：
 //!   cargo run -p lime-analyze --example chime_debug
 //!   cargo run -p lime-analyze --example chime_debug -- <wav> <t0_s> <t1_s>
-use lime_analyze::chime::{
-    band_env_db, detect_chimes, median_db, rms_env_db, ChimeParams,
-};
+use lime_analyze::chime::{band_env_db, detect_chimes, median_db, rms_env_db, ChimeParams};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let p = ChimeParams::default();
     if args.len() >= 3 {
-        run_real(&args[0], args[1].parse().unwrap(), args[2].parse().unwrap(), &p);
+        run_real(
+            &args[0],
+            args[1].parse().unwrap(),
+            args[2].parse().unwrap(),
+            &p,
+        );
     } else {
         run_synth(&p);
     }
@@ -29,9 +32,14 @@ fn run_real(path: &str, t0: f32, t1: f32, p: &ChimeParams) {
     let mono: Vec<f32> = if ch <= 1 {
         raw
     } else {
-        raw.chunks(ch).map(|c| c.iter().sum::<f32>() / ch as f32).collect()
+        raw.chunks(ch)
+            .map(|c| c.iter().sum::<f32>() / ch as f32)
+            .collect()
     };
-    println!("file {path}  sr={sr} ch={ch}  dur={:.1}s", mono.len() as f32 / sr as f32);
+    println!(
+        "file {path}  sr={sr} ch={ch}  dur={:.1}s",
+        mono.len() as f32 / sr as f32
+    );
 
     let (rms, rms_hop) = rms_env_db(&mono, sr, 20.0, 5.0);
     let (ding, ding_ms) = band_env_db(&mono, sr, p.ding_hz, p);
@@ -78,7 +86,10 @@ fn run_real(path: &str, t0: f32, t1: f32, p: &ChimeParams) {
         let ri = ((tms / rms_hop) as usize).min(rms.len() - 1);
         println!(
             "  {t:8.3}  {:6.1} {:6.1} {:6.1}  {:6.1}  {rise:>5}  {drop:6.1}  {pre:8.1}",
-            ding[i], dong[i], rms[ri], ding[i] - med
+            ding[i],
+            dong[i],
+            rms[ri],
+            ding[i] - med
         );
     }
 }
@@ -86,7 +97,7 @@ fn run_real(path: &str, t0: f32, t1: f32, p: &ChimeParams) {
 fn run_synth(p: &ChimeParams) {
     let sr = 48_000u32;
     let mut x = vec![0.0f32; sr as usize * 5];
-    let mut tone = |buf: &mut Vec<f32>, at_s: f32, f0: f32, amp: f32, len_s: f32| {
+    let tone = |buf: &mut Vec<f32>, at_s: f32, f0: f32, amp: f32, len_s: f32| {
         let a = (at_s * sr as f32) as usize;
         let n = (len_s * sr as f32) as usize;
         for i in 0..n {

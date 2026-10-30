@@ -244,7 +244,8 @@ pub fn detect_band(
                 // 带内比宽带低 10–22 dB（见模块头 §5）。
                 let tonal_ok = peak >= peak_rms + params.tonality_db;
                 let pre_ok = if require_pre_silence {
-                    let a = (((t_ms - params.pre_silence_s * 1000.0) / rms_hop_ms).max(0.0)) as usize;
+                    let a =
+                        (((t_ms - params.pre_silence_s * 1000.0) / rms_hop_ms).max(0.0)) as usize;
                     let b = (((t_ms - params.pre_exclude_ms) / rms_hop_ms).max(0.0) as usize)
                         .min(rms.len());
                     let pre_max = if b > a {
@@ -252,8 +253,7 @@ pub fn detect_band(
                     } else {
                         99.0
                     };
-                    pre_max <= params.pre_silence_db
-                        && pre_max <= peak_rms - params.pre_relative_db
+                    pre_max <= params.pre_silence_db && pre_max <= peak_rms - params.pre_relative_db
                 } else {
                     true
                 };
@@ -289,13 +289,16 @@ fn peak_with_decay(
     let (im, peak) = env[a..b]
         .iter()
         .enumerate()
-        .fold((a, f32::MIN), |(bi, bp), (k, v)| {
-            if *v > bp {
-                (a + k, *v)
-            } else {
-                (bi, bp)
-            }
-        });
+        .fold(
+            (a, f32::MIN),
+            |(bi, bp), (k, v)| {
+                if *v > bp {
+                    (a + k, *v)
+                } else {
+                    (bi, bp)
+                }
+            },
+        );
     if peak <= f32::MIN {
         return None;
     }
@@ -363,10 +366,22 @@ mod tests {
         tone(&mut x, 1.0, 2578.0, 0.25, 1.0);
         tone(&mut x, 1.59, 2039.0, 0.18, 1.0);
         let chimes = detect_chimes(&x, sr, &ChimeParams::default());
-        assert_eq!(chimes.len(), 1, "should find exactly one chime, got {chimes:?}");
+        assert_eq!(
+            chimes.len(),
+            1,
+            "should find exactly one chime, got {chimes:?}"
+        );
         let c = chimes[0];
-        assert!((c.ding_ms as i64 - 1000).abs() < 60, "ding at {} ms", c.ding_ms);
-        assert!((c.dong_ms as i64 - 1590).abs() < 80, "dong at {} ms", c.dong_ms);
+        assert!(
+            (c.ding_ms as i64 - 1000).abs() < 60,
+            "ding at {} ms",
+            c.ding_ms
+        );
+        assert!(
+            (c.dong_ms as i64 - 1590).abs() < 80,
+            "dong at {} ms",
+            c.dong_ms
+        );
         assert!(c.confidence > 0.7, "confidence {}", c.confidence);
     }
 
@@ -378,11 +393,14 @@ mod tests {
         let a = sr as usize; // 1 s 起
         for i in 0..sr as usize * 2 {
             let t = i as f32 / sr as f32;
-            let n = ((i as f32 * 12.9898).sin() * 43758.5453).fract() - 0.5; // 伪随机
+            let n = ((i as f32 * 12.9898).sin() * 43_758.547).fract() - 0.5; // 伪随机
             x[a + i] = 0.3 * n + 0.2 * (2.0 * std::f32::consts::PI * 2578.0 * t).sin();
         }
         let chimes = detect_chimes(&x, sr, &ChimeParams::default());
-        assert!(chimes.is_empty(), "sustained noise must not match, got {chimes:?}");
+        assert!(
+            chimes.is_empty(),
+            "sustained noise must not match, got {chimes:?}"
+        );
     }
 
     /// 宽带瞬态对（间隔 ≈0.59 s）不应被当成叮咚：它没有音调纯度。

@@ -38,7 +38,7 @@ fn main() {
         let seg = &left[frames / 10..frames - frames / 10];
         let dur = y.len() as f32 / ch as f32 / rate as f32;
         let est = dominant_freq_zero_cross(seg, rate);
-        let expect_dur = 3.0 / speed as f32;
+        let expect_dur = 3.0 / speed;
         let dur_ok = (dur - expect_dur).abs() < 0.25;
         let pitch_ok = (est - f0).abs() < 15.0;
         ok &= dur_ok && pitch_ok;

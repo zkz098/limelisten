@@ -150,7 +150,7 @@ pub fn normalize_chapters(chapters: &[Chapter]) -> Vec<Chapter> {
         .is_some_and(|&i| is_intro_or_auto_material(&chapters[i]));
 
     for (mi, &index) in mats.iter().enumerate() {
-        let mat_pos = out.len() as usize;
+        let mat_pos = out.len();
         let seq = out.len() as u32;
         let mut mat = chapters[index].clone();
         mat.seq = seq;
@@ -161,7 +161,11 @@ pub fn normalize_chapters(chapters: &[Chapter]) -> Vec<Chapter> {
             mat.title = INTRO_TITLE.to_string();
         } else {
             // 引言不占材料号：它后面的材料显示为「材料 1」
-            let display_ord = if first_is_intro { mi as u32 } else { mi as u32 + 1 };
+            let display_ord = if first_is_intro {
+                mi as u32
+            } else {
+                mi as u32 + 1
+            };
             if let Some(t) = renumber_material_title(&mat.title, display_ord) {
                 mat.title = t;
             }
@@ -470,7 +474,7 @@ mod tests {
     #[test]
     fn normalize_without_materials_keeps_questions() {
         let q = question(0, 1, None, 0, 10_000);
-        let out = normalize_chapters(&[q.clone()]);
+        let out = normalize_chapters(std::slice::from_ref(&q));
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].level, ChapterLevel::Question);
         assert_eq!(out[0].parent, None);

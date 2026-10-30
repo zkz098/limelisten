@@ -99,7 +99,9 @@ impl LimedFile {
         }
 
         if &bytes[0..5] != LIMED_MAGIC {
-            return Err(Error::Limed("invalid magic header, not a .limed file".into()));
+            return Err(Error::Limed(
+                "invalid magic header, not a .limed file".into(),
+            ));
         }
 
         let version = bytes[5];
@@ -266,11 +268,31 @@ mod tests {
             end_ms: 4500,
             text: "Welcome to the listening test.".into(),
             words: vec![
-                Word { start_ms: 600, end_ms: 1100, text: "Welcome".into() },
-                Word { start_ms: 1150, end_ms: 1300, text: "to".into() },
-                Word { start_ms: 1350, end_ms: 1500, text: "the".into() },
-                Word { start_ms: 1550, end_ms: 2200, text: "listening".into() },
-                Word { start_ms: 2250, end_ms: 2800, text: "test.".into() },
+                Word {
+                    start_ms: 600,
+                    end_ms: 1100,
+                    text: "Welcome".into(),
+                },
+                Word {
+                    start_ms: 1150,
+                    end_ms: 1300,
+                    text: "to".into(),
+                },
+                Word {
+                    start_ms: 1350,
+                    end_ms: 1500,
+                    text: "the".into(),
+                },
+                Word {
+                    start_ms: 1550,
+                    end_ms: 2200,
+                    text: "listening".into(),
+                },
+                Word {
+                    start_ms: 2250,
+                    end_ms: 2800,
+                    text: "test.".into(),
+                },
             ],
             chapter: Some(1),
         }];
@@ -360,24 +382,25 @@ mod tests {
     #[test]
     fn test_limed_with_exercises_roundtrip() {
         use crate::{ExerciseQuestion, MaterialExercise};
-        let sample = make_sample_limed().with_exercises(vec![
-            MaterialExercise::new(
-                1,
-                "Text 1",
-                vec![
-                    ExerciseQuestion::new(1, "What is it?", vec!["A. Cat".into(), "B. Dog".into()])
-                        .with_answer("A")
-                        .with_explanation("It purrs."),
-                ],
-            ),
-        ]);
+        let sample = make_sample_limed().with_exercises(vec![MaterialExercise::new(
+            1,
+            "Text 1",
+            vec![
+                ExerciseQuestion::new(1, "What is it?", vec!["A. Cat".into(), "B. Dog".into()])
+                    .with_answer("A")
+                    .with_explanation("It purrs."),
+            ],
+        )]);
 
         let encoded = sample.encode().unwrap();
         let decoded = LimedFile::decode(&encoded).unwrap();
         assert_eq!(decoded.exercises.len(), 1);
         assert_eq!(decoded.exercises[0].material_ordinal, 1);
         assert_eq!(decoded.exercises[0].questions[0].num, 1);
-        assert_eq!(decoded.exercises[0].questions[0].answer.as_deref(), Some("A"));
+        assert_eq!(
+            decoded.exercises[0].questions[0].answer.as_deref(),
+            Some("A")
+        );
     }
 
     #[test]
@@ -394,6 +417,9 @@ mod tests {
         }"#;
 
         let decoded: LimedFile = serde_json::from_str(json).unwrap();
-        assert!(decoded.exercises.is_empty(), "老版本缺省 exercises 时必须默认为空 Vec");
+        assert!(
+            decoded.exercises.is_empty(),
+            "老版本缺省 exercises 时必须默认为空 Vec"
+        );
     }
 }

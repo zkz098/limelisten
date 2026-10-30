@@ -36,7 +36,12 @@ pub fn probe(path: &Path) -> Result<AudioInfo> {
         hint.with_extension(ext);
     }
     let probed = symphonia::default::get_probe()
-        .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+        .format(
+            &hint,
+            mss,
+            &FormatOptions::default(),
+            &MetadataOptions::default(),
+        )
         .map_err(|e| Error::Decode(e.to_string()))?;
     let track = probed
         .format
@@ -48,10 +53,14 @@ pub fn probe(path: &Path) -> Result<AudioInfo> {
     let duration_ms = match (params.n_frames, params.time_base) {
         (Some(frames), Some(tb)) => {
             let t = tb.calc_time(frames);
-            (t.seconds * 1000 + (t.frac * 1000.0) as u64) as u64
+            t.seconds * 1000 + (t.frac * 1000.0) as u64
         }
         (Some(frames), None) => frames * 1000 / sample_rate as u64,
         _ => 0,
     };
-    Ok(AudioInfo { sample_rate, channels, duration_ms })
+    Ok(AudioInfo {
+        sample_rate,
+        channels,
+        duration_ms,
+    })
 }

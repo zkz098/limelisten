@@ -7,9 +7,7 @@
 //! - 字幕导出：支持 SRT、LRC、TXT 导出；
 //! - 断点续播与统计：自动存取进度，播放/循环写入统计。
 
-use crate::cli::{
-    analyze_and_export_wav, assign_sentences_to_chapters, transcribe, AnalysisCore,
-};
+use crate::cli::{analyze_and_export_wav, assign_sentences_to_chapters, transcribe, AnalysisCore};
 use crate::paths;
 use crate::{
     ChapterRow, ExerciseQuestionRow, MainWindow, MediaRow, ModelBenchmarkRow, QuestionOptionItem,
@@ -147,7 +145,10 @@ impl GuiState {
         core.chapters.get(idx).map(|c| (c.start_ms, c.end_ms))
     }
     fn whole_range(&self) -> (u64, u64) {
-        (0, self.core.as_ref().map(|c| c.info.duration_ms).unwrap_or(0))
+        (
+            0,
+            self.core.as_ref().map(|c| c.info.duration_ms).unwrap_or(0),
+        )
     }
 }
 
@@ -168,7 +169,10 @@ fn get_bench_model_rows(
                 .to_string();
             (format!("{:.1} MB", sz as f64 / 1_048_576.0), fname)
         } else {
-            (format!("~{} MB", meta.approx_size_mb), meta.filename.to_string())
+            (
+                format!("~{} MB", meta.approx_size_mb),
+                meta.filename.to_string(),
+            )
         };
 
         let is_dl = downloading_spec
@@ -758,15 +762,24 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let last_sentence = Rc::clone(&last_sentence);
         ui.on_open_folder(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let Some(dir) = rfd::FileDialog::new().pick_folder() else { return };
+            let Some(dir) = rfd::FileDialog::new().pick_folder() else {
+                return;
+            };
 
             let mut found = Vec::new();
             if let Ok(entries) = std::fs::read_dir(&dir) {
                 for entry in entries.flatten() {
                     let p = entry.path();
                     if p.is_file() {
-                        let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("").to_ascii_lowercase();
-                        if matches!(ext.as_str(), "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus") {
+                        let ext = p
+                            .extension()
+                            .and_then(|s| s.to_str())
+                            .unwrap_or("")
+                            .to_ascii_lowercase();
+                        if matches!(
+                            ext.as_str(),
+                            "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus"
+                        ) {
                             found.push(p);
                         }
                     }
@@ -786,15 +799,13 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_secs() as i64)
                     .unwrap_or(0);
-                let dur = lime_audio::probe(p).map(|i| i.duration_ms as i64).unwrap_or(0);
-                let _ = store.borrow().upsert_media(
-                    &p.to_string_lossy(),
-                    size,
-                    mtime,
-                    dur,
-                    44100,
-                    2,
-                );
+                let dur = lime_audio::probe(p)
+                    .map(|i| i.duration_ms as i64)
+                    .unwrap_or(0);
+                let _ =
+                    store
+                        .borrow()
+                        .upsert_media(&p.to_string_lossy(), size, mtime, dur, 44100, 2);
             }
 
             refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
@@ -818,14 +829,23 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let last_sentence = Rc::clone(&last_sentence);
         ui.on_select_media(move |idx| {
             let Some(ui) = ui_weak.upgrade() else { return };
-            if idx < 0 { return };
+            if idx < 0 {
+                return;
+            };
             let item = {
                 let st = state.borrow();
                 st.media_list.get(idx as usize).cloned()
             };
             let Some(item) = item else { return };
             ui.set_current_media_idx(idx);
-            load_or_analyze_media(PathBuf::from(item.path), &ui, &state, &store, &tx, &last_sentence);
+            load_or_analyze_media(
+                PathBuf::from(item.path),
+                &ui,
+                &state,
+                &store,
+                &tx,
+                &last_sentence,
+            );
         });
     }
 
@@ -841,7 +861,13 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 ui.set_status("未打开音频".into());
                 return;
             };
-            spawn_analyze(path, ui_weak.clone(), tx.clone(), state.clone(), store.clone());
+            spawn_analyze(
+                path,
+                ui_weak.clone(),
+                tx.clone(),
+                state.clone(),
+                store.clone(),
+            );
         });
     }
 
@@ -1030,7 +1056,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             }
             let hidden = hidden_rows(&core.chapters, &st.collapsed_materials);
             let next = step_visible(&core.chapters, &hidden, ui.get_current(), dir);
-            let Some((a, b)) = st.range(next.max(0) as usize) else { return };
+            let Some((a, b)) = st.range(next.max(0) as usize) else {
+                return;
+            };
             ui.set_current(next);
             apply_range(&st, &ui, a, b);
         };
@@ -1067,7 +1095,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let idx = idx.max(0) as usize;
             let mut st = state.borrow_mut();
             let Some(core) = st.core.as_ref() else { return };
-            let Some(ch) = core.chapters.get(idx) else { return };
+            let Some(ch) = core.chapters.get(idx) else {
+                return;
+            };
             if !ch.is_material() {
                 return;
             }
@@ -1136,7 +1166,11 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         ui.on_loop_cycle(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let mut st = state.borrow_mut();
-            st.loop_count = if st.loop_count >= 3 { 0 } else { st.loop_count + 1 };
+            st.loop_count = if st.loop_count >= 3 {
+                0
+            } else {
+                st.loop_count + 1
+            };
             let n = st.loop_count;
             if let Some((a, b)) = st.range(ui.get_current().max(0) as usize) {
                 if let Some(eng) = st.engine.as_ref() {
@@ -1158,7 +1192,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let ap = st.auto_pause;
             if let Some(eng) = st.engine.as_ref() {
                 let stop = if ap {
-                    st.range(ui.get_current().max(0) as usize).map(|(_, b)| b).unwrap_or(0)
+                    st.range(ui.get_current().max(0) as usize)
+                        .map(|(_, b)| b)
+                        .unwrap_or(0)
                 } else {
                     0
                 };
@@ -1180,14 +1216,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 st.show_transcript
             };
             ui.set_show_transcript(show);
-            ui.set_status(
-                if show {
-                    "显示原文"
-                } else {
-                    "隐藏原文"
-                }
-                .into(),
-            );
+            ui.set_status(if show { "显示原文" } else { "隐藏原文" }.into());
         });
     }
 
@@ -1227,16 +1256,20 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
             let (seq, s, e, title, rows) = {
                 let Some(core) = st.core.as_mut() else { return };
-                let Some(ch) = core.chapters.get_mut(cur_idx as usize) else { return };
+                let Some(ch) = core.chapters.get_mut(cur_idx as usize) else {
+                    return;
+                };
 
                 if is_start {
                     let new_start = (ch.start_ms as i64 + delta_ms)
-                        .clamp(0, ch.end_ms.saturating_sub(100) as i64) as u64;
+                        .clamp(0, ch.end_ms.saturating_sub(100) as i64)
+                        as u64;
                     ch.start_ms = new_start;
                 } else {
                     let max_d = core.info.duration_ms;
                     let new_end = (ch.end_ms as i64 + delta_ms)
-                        .clamp((ch.start_ms + 100) as i64, max_d as i64) as u64;
+                        .clamp((ch.start_ms + 100) as i64, max_d as i64)
+                        as u64;
                     ch.end_ms = new_end;
                 }
                 ch.source = ChapterSource::Manual;
@@ -1258,7 +1291,15 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 eng.set_loop(s, e, loop_count);
                 eng.set_stop_at(if auto_pause { e } else { 0 });
             }
-            ui.set_status(format!("微调 [{}]：{} – {}", title, crate::cli::fmt_ms(s), crate::cli::fmt_ms(e)).into());
+            ui.set_status(
+                format!(
+                    "微调 [{}]：{} – {}",
+                    title,
+                    crate::cli::fmt_ms(s),
+                    crate::cli::fmt_ms(e)
+                )
+                .into(),
+            );
         });
     }
 
@@ -1349,7 +1390,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let (path, range) = {
                 let st = state.borrow();
                 let Some(path) = st.path.clone() else { return };
-                let Some(range) = st.range(cur_idx as usize) else { return };
+                let Some(range) = st.range(cur_idx as usize) else {
+                    return;
+                };
                 (path, range)
             };
             let end = range.1;
@@ -1366,7 +1409,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 eng.play();
                 ui.set_playing(true);
                 ui.set_position(start as f32);
-                ui.set_status(format!("试听：{} – {}", crate::cli::fmt_ms(start), crate::cli::fmt_ms(end)).into());
+                ui.set_status(
+                    format!(
+                        "试听：{} – {}",
+                        crate::cli::fmt_ms(start),
+                        crate::cli::fmt_ms(end)
+                    )
+                    .into(),
+                );
             }
         });
     }
@@ -1397,7 +1447,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             };
 
             let save_dialog = rfd::FileDialog::new()
-                .set_file_name(&format!("{base_name}.{ext}"))
+                .set_file_name(format!("{base_name}.{ext}"))
                 .add_filter(filter_name, &[ext]);
 
             let Some(save_path) = save_dialog.save_file() else {
@@ -1435,7 +1485,13 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             };
 
             match std::fs::write(&save_path, content.as_bytes()) {
-                Ok(_) => ui.set_status(format!("已导出 {}", save_path.file_name().unwrap_or_default().to_string_lossy()).into()),
+                Ok(_) => ui.set_status(
+                    format!(
+                        "已导出 {}",
+                        save_path.file_name().unwrap_or_default().to_string_lossy()
+                    )
+                    .into(),
+                ),
                 Err(e) => ui.set_status(format!("导出失败: {e}").into()),
             }
         });
@@ -1717,216 +1773,231 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let store = store.clone();
         let last_sentence = Rc::clone(&last_sentence);
         let timer = slint::Timer::default();
-        timer.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(50), move || {
-            let Some(ui) = ui_weak.upgrade() else { return };
+        timer.start(
+            slint::TimerMode::Repeated,
+            std::time::Duration::from_millis(50),
+            move || {
+                let Some(ui) = ui_weak.upgrade() else { return };
 
-            while let Ok(m) = rx.try_recv() {
-                match m {
-                    Msg::Status(s) => ui.set_status(s.into()),
-                    Msg::TranscribeProgress(p) => ui.set_transcribe_progress(p),
-                    Msg::Error(e) => {
-                        ui.set_transcribe_progress(-1.0);
-                        ui.set_status(e.into());
-                    }
-                    Msg::BenchModelUpdate {
-                        spec,
-                        bench_status,
-                        is_recommended,
-                    } => {
-                        let mut st = state.borrow_mut();
-                        st.bench_results.insert(spec, (bench_status, is_recommended));
-                        refresh_bench_models_ui(&ui, &st);
-                    }
-                    Msg::BenchDone { summary } => {
-                        ui.set_is_benchmarking(false);
-                        ui.set_bench_summary(summary.into());
-                        let st = state.borrow();
-                        st.is_benchmarking.store(false, Ordering::Relaxed);
-                        refresh_bench_models_ui(&ui, &st);
-                    }
-                    Msg::DownloadProgress {
-                        spec,
-                        progress,
-                        status_text,
-                    } => {
-                        let mut st = state.borrow_mut();
-                        st.downloading_spec = Some((spec, progress, status_text));
-                        refresh_bench_models_ui(&ui, &st);
-                    }
-                    Msg::DownloadDone {
-                        spec: _,
-                        success,
-                        msg,
-                    } => {
-                        let mut st = state.borrow_mut();
-                        st.downloading_spec = None;
-                        st.is_downloading.store(false, Ordering::Relaxed);
-                        refresh_bench_models_ui(&ui, &st);
-                        ui.set_status(msg.into());
-                        if success {
-                            ui.set_bench_summary("模型下载完成".into());
+                while let Ok(m) = rx.try_recv() {
+                    match m {
+                        Msg::Status(s) => ui.set_status(s.into()),
+                        Msg::TranscribeProgress(p) => ui.set_transcribe_progress(p),
+                        Msg::Error(e) => {
+                            ui.set_transcribe_progress(-1.0);
+                            ui.set_status(e.into());
                         }
-                    }
-                    Msg::WhisperDownloadProgress {
-                        id,
-                        progress,
-                        status_text,
-                    } => {
-                        let mut st = state.borrow_mut();
-                        st.whisper_downloading = Some((id, progress, status_text));
-                        refresh_whisper_ui(&ui, &st);
-                    }
-                    Msg::WhisperDownloadDone {
-                        id: _,
-                        success,
-                        msg,
-                    } => {
-                        let mut st = state.borrow_mut();
-                        st.whisper_downloading = None;
-                        st.is_downloading_cli.store(false, Ordering::Relaxed);
-                        refresh_whisper_ui(&ui, &st);
-                        ui.set_status(msg.into());
-                        if success {
-                            ui.set_bench_summary("转写引擎已就绪".into());
+                        Msg::BenchModelUpdate {
+                            spec,
+                            bench_status,
+                            is_recommended,
+                        } => {
+                            let mut st = state.borrow_mut();
+                            st.bench_results
+                                .insert(spec, (bench_status, is_recommended));
+                            refresh_bench_models_ui(&ui, &st);
                         }
-                    }
-                    Msg::TranscribeDone { sentences, chapters } => {
-                        ui.set_transcribe_progress(-1.0);
-                        ui.set_has_subtitles(true);
-                        last_sentence.set(usize::MAX);
-                        let mut st = state.borrow_mut();
-                        if let Some(mid) = st.media_id {
-                            let fp = crate::cli::asr_fingerprint().unwrap_or_default();
-                            let model = crate::cli::asr_model_label();
-                            let _ = store.borrow().save_sentences(mid, &sentences);
-                            let _ = store.borrow().save_analysis(mid, &model, &fp, "");
+                        Msg::BenchDone { summary } => {
+                            ui.set_is_benchmarking(false);
+                            ui.set_bench_summary(summary.into());
+                            let st = state.borrow();
+                            st.is_benchmarking.store(false, Ordering::Relaxed);
+                            refresh_bench_models_ui(&ui, &st);
                         }
-                        refresh_media_list(&ui, &store.borrow(), &mut st);
-                        // 切分可能因「同材料重复朗读」被合并：刷新章节树并落库
-                        let changed = st
-                            .core
-                            .as_ref()
-                            .map(|c| c.chapters != chapters)
-                            .unwrap_or(false);
-                        let mut summary = format!("转写完成：{} 句", sentences.len());
-                        if changed {
-                            let fresh = canonical_chapters(&chapters);
-                            let saved = save_and_reload_chapters(&store, st.media_id, fresh);
-                            if let Some(core) = st.core.as_mut() {
-                                core.chapters = saved.clone();
+                        Msg::DownloadProgress {
+                            spec,
+                            progress,
+                            status_text,
+                        } => {
+                            let mut st = state.borrow_mut();
+                            st.downloading_spec = Some((spec, progress, status_text));
+                            refresh_bench_models_ui(&ui, &st);
+                        }
+                        Msg::DownloadDone {
+                            spec: _,
+                            success,
+                            msg,
+                        } => {
+                            let mut st = state.borrow_mut();
+                            st.downloading_spec = None;
+                            st.is_downloading.store(false, Ordering::Relaxed);
+                            refresh_bench_models_ui(&ui, &st);
+                            ui.set_status(msg.into());
+                            if success {
+                                ui.set_bench_summary("模型下载完成".into());
                             }
-                            let hidden = hidden_rows(&saved, &st.collapsed_materials);
-                            let current = uncloak_current(&saved, &hidden, ui.get_current());
-                            set_chapter_rows(&ui, &saved, &st.collapsed_materials);
-                            ui.set_current(current);
-                            ui.set_has_chapters(!saved.is_empty());
-                            summary =
-                                format!("转写完成：{} 句 · {}", sentences.len(), chapters_summary(&saved));
                         }
-                        st.sentences = sentences;
-                        ui.set_status(summary.into());
-                    }
-                    Msg::AnalyzeDone(core) => {
-                        let core = *core;
-                        let fresh = canonical_chapters(&core.chapters);
-                        let mut st = state.borrow_mut();
-                        // 落库 + 回读：人工锁定过的章节会原地保留人工边界
-                        let chapters = save_and_reload_chapters(&store, st.media_id, fresh);
-                        let hidden = hidden_rows(&chapters, &st.collapsed_materials);
-                        let current = uncloak_current(&chapters, &hidden, ui.get_current());
-                        let rows = chapter_rows_from_list(&chapters, &st.collapsed_materials);
-                        let summary = chapters_summary(&chapters);
-                        let _strong =
-                            core.chimes.iter().filter(|c| c.confidence >= 0.35).count();
-                        ui.set_chapter_total(chapters.len() as i32);
-                        ui.set_chapters(ModelRc::new(VecModel::from(rows)));
-                        ui.set_current(current);
-                        ui.set_has_chapters(!chapters.is_empty());
-                        ui.set_duration(core.info.duration_ms as f32);
-                        ui.set_chime_info(summary.clone().into());
-                        ui.set_status(format!("切分完成：{summary}").into());
-                        if st.media_id.is_some() {
-                            refresh_media_list(&ui, &store.borrow(), &mut st);
+                        Msg::WhisperDownloadProgress {
+                            id,
+                            progress,
+                            status_text,
+                        } => {
+                            let mut st = state.borrow_mut();
+                            st.whisper_downloading = Some((id, progress, status_text));
+                            refresh_whisper_ui(&ui, &st);
                         }
-                        let idx = ui.get_current().max(0) as usize;
-                        let range = chapters.get(idx).map(|c| (c.start_ms, c.end_ms));
-                        st.core = Some(AnalysisCore {
-                            path: core.path,
-                            info: core.info,
-                            structure: core.structure,
-                            chimes: core.chimes,
+                        Msg::WhisperDownloadDone {
+                            id: _,
+                            success,
+                            msg,
+                        } => {
+                            let mut st = state.borrow_mut();
+                            st.whisper_downloading = None;
+                            st.is_downloading_cli.store(false, Ordering::Relaxed);
+                            refresh_whisper_ui(&ui, &st);
+                            ui.set_status(msg.into());
+                            if success {
+                                ui.set_bench_summary("转写引擎已就绪".into());
+                            }
+                        }
+                        Msg::TranscribeDone {
+                            sentences,
                             chapters,
-                        });
-                        if let (Some(eng), Some((a, b))) = (st.engine.as_ref(), range) {
-                            eng.set_loop(a, b, st.loop_count);
-                            eng.set_stop_at(if st.auto_pause { b } else { 0 });
-                        }
-                    }
-                }
-            }
-
-            // 引擎进度
-            let mut pos = ui.get_position() as u64;
-            {
-                let st = state.borrow();
-                if let Some(eng) = st.engine.as_ref() {
-                    let sh = eng.shared();
-                    pos = sh.pos_ms();
-                    ui.set_position(pos as f32);
-                    ui.set_playing(sh.playing());
-                    ui.set_underruns(format!("underrun {}", sh.underruns()).into());
-                    if sh.take_reached_stop() {
-                        let cur = ui.get_current();
-                        let next = match st.core.as_ref() {
-                            Some(core) if !core.chapters.is_empty() => {
-                                let hidden = hidden_rows(&core.chapters, &st.collapsed_materials);
-                                step_visible(&core.chapters, &hidden, cur, 1)
+                        } => {
+                            ui.set_transcribe_progress(-1.0);
+                            ui.set_has_subtitles(true);
+                            last_sentence.set(usize::MAX);
+                            let mut st = state.borrow_mut();
+                            if let Some(mid) = st.media_id {
+                                let fp = crate::cli::asr_fingerprint().unwrap_or_default();
+                                let model = crate::cli::asr_model_label();
+                                let _ = store.borrow().save_sentences(mid, &sentences);
+                                let _ = store.borrow().save_analysis(mid, &model, &fp, "");
                             }
-                            _ => cur,
-                        };
-                        if next != cur && st.auto_pause {
-                            ui.set_current(next);
-                            if let Some((a, b)) = st.range(next as usize) {
+                            refresh_media_list(&ui, &store.borrow(), &mut st);
+                            // 切分可能因「同材料重复朗读」被合并：刷新章节树并落库
+                            let changed = st
+                                .core
+                                .as_ref()
+                                .map(|c| c.chapters != chapters)
+                                .unwrap_or(false);
+                            let mut summary = format!("转写完成：{} 句", sentences.len());
+                            if changed {
+                                let fresh = canonical_chapters(&chapters);
+                                let saved = save_and_reload_chapters(&store, st.media_id, fresh);
+                                if let Some(core) = st.core.as_mut() {
+                                    core.chapters = saved.clone();
+                                }
+                                let hidden = hidden_rows(&saved, &st.collapsed_materials);
+                                let current = uncloak_current(&saved, &hidden, ui.get_current());
+                                set_chapter_rows(&ui, &saved, &st.collapsed_materials);
+                                ui.set_current(current);
+                                ui.set_has_chapters(!saved.is_empty());
+                                summary = format!(
+                                    "转写完成：{} 句 · {}",
+                                    sentences.len(),
+                                    chapters_summary(&saved)
+                                );
+                            }
+                            st.sentences = sentences;
+                            ui.set_status(summary.into());
+                        }
+                        Msg::AnalyzeDone(core) => {
+                            let core = *core;
+                            let fresh = canonical_chapters(&core.chapters);
+                            let mut st = state.borrow_mut();
+                            // 落库 + 回读：人工锁定过的章节会原地保留人工边界
+                            let chapters = save_and_reload_chapters(&store, st.media_id, fresh);
+                            let hidden = hidden_rows(&chapters, &st.collapsed_materials);
+                            let current = uncloak_current(&chapters, &hidden, ui.get_current());
+                            let rows = chapter_rows_from_list(&chapters, &st.collapsed_materials);
+                            let summary = chapters_summary(&chapters);
+                            let _strong =
+                                core.chimes.iter().filter(|c| c.confidence >= 0.35).count();
+                            ui.set_chapter_total(chapters.len() as i32);
+                            ui.set_chapters(ModelRc::new(VecModel::from(rows)));
+                            ui.set_current(current);
+                            ui.set_has_chapters(!chapters.is_empty());
+                            ui.set_duration(core.info.duration_ms as f32);
+                            ui.set_chime_info(summary.clone().into());
+                            ui.set_status(format!("切分完成：{summary}").into());
+                            if st.media_id.is_some() {
+                                refresh_media_list(&ui, &store.borrow(), &mut st);
+                            }
+                            let idx = ui.get_current().max(0) as usize;
+                            let range = chapters.get(idx).map(|c| (c.start_ms, c.end_ms));
+                            st.core = Some(AnalysisCore {
+                                path: core.path,
+                                info: core.info,
+                                structure: core.structure,
+                                chimes: core.chimes,
+                                chapters,
+                            });
+                            if let (Some(eng), Some((a, b))) = (st.engine.as_ref(), range) {
                                 eng.set_loop(a, b, st.loop_count);
-                                eng.set_stop_at(b);
+                                eng.set_stop_at(if st.auto_pause { b } else { 0 });
                             }
-                            ui.set_status("已暂停".into());
-                        }
-                        if let (Some(mid), true) = (st.media_id, cur >= 0) {
-                            let _ = store.borrow().bump_stat(mid, (cur + 1) as i64, false);
                         }
                     }
                 }
-            }
 
-            // 时间显示
-            let dur = ui.get_duration() as u64;
-            ui.set_time_display(format!("{} / {}", crate::cli::fmt_ms(pos), crate::cli::fmt_ms(dur)).into());
-
-            // 定期保存断点续播进度 (每 1.5 秒保存一次)
-            {
-                let mut st = state.borrow_mut();
-                if let Some(mid) = st.media_id {
-                    if st.last_progress_save.elapsed() > std::time::Duration::from_millis(1500) {
-                        st.last_progress_save = std::time::Instant::now();
-                        let cur_ord = (ui.get_current().max(0) + 1) as u32;
-                        let _ = store.borrow().save_progress(mid, pos, cur_ord);
+                // 引擎进度
+                let mut pos = ui.get_position() as u64;
+                {
+                    let st = state.borrow();
+                    if let Some(eng) = st.engine.as_ref() {
+                        let sh = eng.shared();
+                        pos = sh.pos_ms();
+                        ui.set_position(pos as f32);
+                        ui.set_playing(sh.playing());
+                        ui.set_underruns(format!("underrun {}", sh.underruns()).into());
+                        if sh.take_reached_stop() {
+                            let cur = ui.get_current();
+                            let next = match st.core.as_ref() {
+                                Some(core) if !core.chapters.is_empty() => {
+                                    let hidden =
+                                        hidden_rows(&core.chapters, &st.collapsed_materials);
+                                    step_visible(&core.chapters, &hidden, cur, 1)
+                                }
+                                _ => cur,
+                            };
+                            if next != cur && st.auto_pause {
+                                ui.set_current(next);
+                                if let Some((a, b)) = st.range(next as usize) {
+                                    eng.set_loop(a, b, st.loop_count);
+                                    eng.set_stop_at(b);
+                                }
+                                ui.set_status("已暂停".into());
+                            }
+                            if let (Some(mid), true) = (st.media_id, cur >= 0) {
+                                let _ = store.borrow().bump_stat(mid, (cur + 1) as i64, false);
+                            }
+                        }
                     }
                 }
-            }
 
-            // 字幕
-            if ui.get_has_subtitles() {
-                let mut st = state.borrow_mut();
-                update_subtitle(&ui, &mut st, pos, &last_sentence);
-            }
+                // 时间显示
+                let dur = ui.get_duration() as u64;
+                ui.set_time_display(
+                    format!("{} / {}", crate::cli::fmt_ms(pos), crate::cli::fmt_ms(dur)).into(),
+                );
 
-            // 试题联动
-            if ui.get_has_exercises() {
-                let mut st = state.borrow_mut();
-                update_exercise_sync(&ui, &mut st, pos);
-            }
-        });
+                // 定期保存断点续播进度 (每 1.5 秒保存一次)
+                {
+                    let mut st = state.borrow_mut();
+                    if let Some(mid) = st.media_id {
+                        if st.last_progress_save.elapsed() > std::time::Duration::from_millis(1500)
+                        {
+                            st.last_progress_save = std::time::Instant::now();
+                            let cur_ord = (ui.get_current().max(0) + 1) as u32;
+                            let _ = store.borrow().save_progress(mid, pos, cur_ord);
+                        }
+                    }
+                }
+
+                // 字幕
+                if ui.get_has_subtitles() {
+                    let mut st = state.borrow_mut();
+                    update_subtitle(&ui, &mut st, pos, &last_sentence);
+                }
+
+                // 试题联动
+                if ui.get_has_exercises() {
+                    let mut st = state.borrow_mut();
+                    update_exercise_sync(&ui, &mut st, pos);
+                }
+            },
+        );
         std::mem::forget(timer);
     }
 
@@ -1972,7 +2043,9 @@ fn load_or_analyze_media(
     ui.set_current_track_title(filename.clone().into());
     last_sentence.set(usize::MAX);
     ui.set_current(-1);
-    ui.set_lines(ModelRc::new(VecModel::from(Vec::<ModelRc<WordCell>>::new())));
+    ui.set_lines(ModelRc::new(
+        VecModel::from(Vec::<ModelRc<WordCell>>::new()),
+    ));
     ui.set_active_word(-1);
     ui.set_has_subtitles(false);
     ui.set_has_chapters(false);
@@ -1990,7 +2063,9 @@ fn load_or_analyze_media(
         return;
     };
 
-    let size = std::fs::metadata(&path).map(|m| m.len() as i64).unwrap_or(0);
+    let size = std::fs::metadata(&path)
+        .map(|m| m.len() as i64)
+        .unwrap_or(0);
     let mtime = std::fs::metadata(&path)
         .ok()
         .and_then(|m| m.modified().ok())
@@ -2041,7 +2116,8 @@ fn load_or_analyze_media(
                     let st_ref = store.borrow();
                     let fp = st_ref.load_analysis(mid).ok().flatten().map(|(_, fp)| fp);
                     let sents = st_ref.load_sentences(mid).unwrap_or_default();
-                    (!sents.is_empty() && !subtitle_cache_stale(fp.as_deref(), true)).then_some(sents)
+                    (!sents.is_empty() && !subtitle_cache_stale(fp.as_deref(), true))
+                        .then_some(sents)
                 })
             } else {
                 None
@@ -2058,7 +2134,7 @@ fn load_or_analyze_media(
             } else {
                 lime_analyze::merge_repeated_materials(&limed.chapters, &sents)
             };
-            let chapters = save_and_reload_chapters(&store, media_id, merged);
+            let chapters = save_and_reload_chapters(store, media_id, merged);
             let limed_exercises = limed.exercises;
             if let Some(mid) = media_id {
                 if stale_subtitles {
@@ -2087,19 +2163,18 @@ fn load_or_analyze_media(
             if !sents.is_empty() {
                 ui.set_has_subtitles(true);
                 ui.set_status(
-                    format!(
-                        "已加载：{} 章节 · {} 句字幕",
-                        chapters.len(),
-                        sents.len()
-                    )
-                    .into(),
+                    format!("已加载：{} 章节 · {} 句字幕", chapters.len(), sents.len()).into(),
                 );
             } else {
                 ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
             }
 
             let (saved_pos, saved_ord) = if let Some(mid) = media_id {
-                store.borrow().get_progress(mid).unwrap_or(None).unwrap_or((0, 0))
+                store
+                    .borrow()
+                    .get_progress(mid)
+                    .unwrap_or(None)
+                    .unwrap_or((0, 0))
             } else {
                 (0, 0)
             };
@@ -2174,12 +2249,8 @@ fn load_or_analyze_media(
                     if !sents.is_empty() {
                         ui.set_has_subtitles(true);
                         ui.set_status(
-                            format!(
-                                "已加载：{} 章节 · {} 句字幕",
-                                chapters.len(),
-                                sents.len()
-                            )
-                            .into(),
+                            format!("已加载：{} 章节 · {} 句字幕", chapters.len(), sents.len())
+                                .into(),
                         );
                     } else {
                         ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
@@ -2357,7 +2428,9 @@ fn reload_chapters(ui: &MainWindow, st: &mut GuiState, chapters: Vec<Chapter>, k
         .unwrap_or(-1);
     let rows = chapter_rows_from_list(&chapters, &st.collapsed_materials);
     let total = chapters.len() as i32;
-    let range = chapters.get(current.max(0) as usize).map(|c| (c.start_ms, c.end_ms));
+    let range = chapters
+        .get(current.max(0) as usize)
+        .map(|c| (c.start_ms, c.end_ms));
 
     if let Some(core) = st.core.as_mut() {
         core.chapters = chapters;
@@ -2379,7 +2452,9 @@ fn set_chapter_rows(ui: &MainWindow, chapters: &[Chapter], collapsed: &HashMap<u
 
 /// 材料折叠判定：显式记录优先；首份材料（引言）默认折叠。
 fn material_collapsed(chapters: &[Chapter], collapsed: &HashMap<u32, bool>, idx: usize) -> bool {
-    let Some(c) = chapters.get(idx) else { return false };
+    let Some(c) = chapters.get(idx) else {
+        return false;
+    };
     if !c.is_material() {
         return false;
     }
@@ -2443,10 +2518,7 @@ fn chapters_summary(chapters: &[Chapter]) -> String {
     }
 }
 
-fn chapter_rows_from_list(
-    chapters: &[Chapter],
-    collapsed: &HashMap<u32, bool>,
-) -> Vec<ChapterRow> {
+fn chapter_rows_from_list(chapters: &[Chapter], collapsed: &HashMap<u32, bool>) -> Vec<ChapterRow> {
     debug_assert!(
         lime_core::chapters_are_canonical(chapters),
         "章节列表必须先是「材料 → 其题」规范顺序，否则左侧导航会错位: {chapters:?}"
@@ -2503,7 +2575,11 @@ fn build_lines(words: &[Word]) -> ModelRc<ModelRc<WordCell>> {
             lines.push(std::mem::take(&mut cur));
             cur_px = 0.0;
         }
-        cur.push(WordCell { text: t.into(), start_ms: w.start_ms as i32, idx: i as i32 });
+        cur.push(WordCell {
+            text: t.into(),
+            start_ms: w.start_ms as i32,
+            idx: i as i32,
+        });
         cur_px += px;
     }
     if !cur.is_empty() {
@@ -2533,7 +2609,11 @@ fn update_subtitle(ui: &MainWindow, st: &mut GuiState, pos_ms: u64, last: &Cell<
         last.set(i);
         ui.set_lines(build_lines(&s.words));
         st.current_words = s.words.clone();
-        let next = st.sentences.get(i + 1).map(|x| x.text.clone()).unwrap_or_default();
+        let next = st
+            .sentences
+            .get(i + 1)
+            .map(|x| x.text.clone())
+            .unwrap_or_default();
         ui.set_next_line(next.into());
     }
     let active = s
@@ -2656,7 +2736,9 @@ fn update_exercise_sync(ui: &MainWindow, st: &mut GuiState, pos_ms: u64) {
 }
 
 pub fn file_label(p: &Path) -> String {
-    p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
+    p.file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_default()
 }
 
 fn fmt_srt_time(ms: u64) -> String {
@@ -2774,7 +2856,10 @@ mod tests {
             vec![0, 3, 4],
             "可见行必须回传规范章节下标"
         );
-        assert_eq!(hidden_rows(&chapters, &collapsed), vec![false, true, true, false, false]);
+        assert_eq!(
+            hidden_rows(&chapters, &collapsed),
+            vec![false, true, true, false, false]
+        );
     }
 
     #[test]
@@ -2819,8 +2904,14 @@ mod tests {
         assert!(subtitle_cache_stale(Some(&params), true));
 
         // 解码参数换代 → 失效
-        assert!(subtitle_cache_stale(Some("asr-pipeline/1|ml=1|sow=1"), true));
-        assert!(subtitle_cache_stale(Some("asr-pipeline/1|ml=1|sow=1"), false));
+        assert!(subtitle_cache_stale(
+            Some("asr-pipeline/1|ml=1|sow=1"),
+            true
+        ));
+        assert!(subtitle_cache_stale(
+            Some("asr-pipeline/1|ml=1|sow=1"),
+            false
+        ));
     }
 
     #[test]
@@ -2854,7 +2945,9 @@ Key: B
 
         // 2. 存入 SQLite 并回读
         let store = Store::open_in_memory().unwrap();
-        let mid = store.upsert_media("audio.mp3", 100, 100, 10000, 44100, 2).unwrap();
+        let mid = store
+            .upsert_media("audio.mp3", 100, 100, 10000, 44100, 2)
+            .unwrap();
         store.save_exercises(mid, &exercises).unwrap();
         let loaded_from_db = store.load_exercises(mid).unwrap();
         assert_eq!(loaded_from_db, exercises);
@@ -2875,10 +2968,22 @@ Key: B
         let encoded = limed.encode().unwrap();
         let decoded = LimedFile::decode(&encoded).unwrap();
         assert_eq!(decoded.exercises.len(), 2);
-        assert_eq!(decoded.exercises[0].questions[0].stem, "What is the woman doing?");
-        assert_eq!(decoded.exercises[0].questions[0].options[2], "C. Waiting for a bus.");
-        assert_eq!(decoded.exercises[0].questions[0].answer.as_deref(), Some("C"));
-        assert!(decoded.exercises[0].questions[0].explanation.as_ref().unwrap().contains("车站"));
+        assert_eq!(
+            decoded.exercises[0].questions[0].stem,
+            "What is the woman doing?"
+        );
+        assert_eq!(
+            decoded.exercises[0].questions[0].options[2],
+            "C. Waiting for a bus."
+        );
+        assert_eq!(
+            decoded.exercises[0].questions[0].answer.as_deref(),
+            Some("C")
+        );
+        assert!(decoded.exercises[0].questions[0]
+            .explanation
+            .as_ref()
+            .unwrap()
+            .contains("车站"));
     }
 }
-

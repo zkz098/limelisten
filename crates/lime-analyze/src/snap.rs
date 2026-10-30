@@ -98,7 +98,11 @@ pub fn snap_by_mode(words: &[Word], structure: &Structure, mode: SnapMode) -> Ve
                 .map(|w| {
                     let s = mapper.map(w.start_ms, true);
                     let e = mapper.map(w.end_ms, false).max(s + 10);
-                    Word { start_ms: s, end_ms: e, text: w.text.clone() }
+                    Word {
+                        start_ms: s,
+                        end_ms: e,
+                        text: w.text.clone(),
+                    }
                 })
                 .collect()
         }
@@ -125,7 +129,10 @@ pub fn fit_affine(words: &[Word], structure: &Structure) -> Option<Affine> {
     let w_span = (raw_last - raw_first).max(1.0);
     let d_span = (dsp_last - dsp_first).max(1.0);
     let k = d_span / w_span;
-    Some(Affine { k, a_ms: dsp_first - raw_first * k })
+    Some(Affine {
+        k,
+        a_ms: dsp_first - raw_first * k,
+    })
 }
 
 fn apply_line(words: &[Word], structure: &Structure, (a, k): (f64, f64)) -> Vec<Word> {
@@ -138,7 +145,11 @@ fn apply_line(words: &[Word], structure: &Structure, (a, k): (f64, f64)) -> Vec<
             let m = |t: u64| ((a + k * t as f64).clamp(lo, hi)) as u64;
             let s = m(w.start_ms);
             let e = m(w.end_ms).max(s + 10);
-            Word { start_ms: s, end_ms: e, text: w.text.clone() }
+            Word {
+                start_ms: s,
+                end_ms: e,
+                text: w.text.clone(),
+            }
         })
         .collect();
     clamp_into_speech(&mapped, structure)
@@ -251,7 +262,11 @@ pub fn apply_piecewise_linear(
         .map(|w| {
             let s = map_time(w.start_ms);
             let e = map_time(w.end_ms).max(s + 10);
-            Word { start_ms: s, end_ms: e, text: w.text.clone() }
+            Word {
+                start_ms: s,
+                end_ms: e,
+                text: w.text.clone(),
+            }
         })
         .collect();
     clamp_into_speech(&mapped, structure)
@@ -339,7 +354,7 @@ fn align_markers_dtw(
                     }
                     let slope = dy / dx;
                     // 局部斜率约束：必须符合合理的语速/静音伸缩范围
-                    if slope >= 0.65 && slope <= 1.6 {
+                    if (0.65..=1.6).contains(&slope) {
                         let skipped_s = (i - pi - 1) as f64 * SKIP_S_COST;
                         let skipped_r = (j - pj - 1) as f64 * SKIP_R_COST;
                         let cost = prev_cost + skipped_s + skipped_r + match_cost;
@@ -357,9 +372,8 @@ fn align_markers_dtw(
     let mut best_total = f64::INFINITY;
     let mut best_end = None;
 
-    for i in 0..m {
-        for j in 0..n {
-            let c = dp[i][j];
+    for (i, row) in dp.iter().enumerate().take(m) {
+        for (j, &c) in row.iter().enumerate().take(n) {
             if c.is_finite() {
                 let tail_cost = (m - 1 - i) as f64 * SKIP_S_COST + (n - 1 - j) as f64 * SKIP_R_COST;
                 let total = c + tail_cost;
@@ -443,7 +457,11 @@ pub fn spoken_material_markers(words: &[Word]) -> Vec<u64> {
         if win.len() > 4 {
             win.remove(0);
         }
-        let joined = win.iter().map(|x| x.0.as_str()).collect::<Vec<_>>().join(" ");
+        let joined = win
+            .iter()
+            .map(|x| x.0.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
         if re.is_match(&joined) {
             // 位置必须取**关键词所在的词**：中文长句作为单个词时，窗口首词可能比 "Text" 早 10 s
             let pos = win
@@ -457,7 +475,11 @@ pub fn spoken_material_markers(words: &[Word]) -> Vec<u64> {
                 })
                 .map(|x| x.1)
                 .unwrap_or(w.start_ms);
-            if out.last().map(|p| pos.saturating_sub(*p) > 10_000).unwrap_or(true) {
+            if out
+                .last()
+                .map(|p| pos.saturating_sub(*p) > 10_000)
+                .unwrap_or(true)
+            {
                 // 去重窗口 10 s：实测 Whisper 会把同一处念白重复识别好几次
                 // （训练2：112920 / 114700 / 121720 都是 "Text three"），
                 // 重复标记会把“相邻斜率”算得不一致，让地标对齐整个失效。
@@ -540,7 +562,14 @@ impl Mapper {
             acc += len;
         }
         let d_total = acc;
-        Self { w, w_total, d, d_total, island_of: Vec::new(), by_index: false }
+        Self {
+            w,
+            w_total,
+            d,
+            d_total,
+            island_of: Vec::new(),
+            by_index: false,
+        }
     }
 
     fn cum_before(&self, t: u64) -> f64 {
@@ -562,7 +591,11 @@ impl Mapper {
         let u = u.clamp(0.0, self.d_total as f64);
         for &(a, b, acc) in &self.d {
             let len = (b - a) as f64;
-            let inside = if prefer_later { u < acc as f64 + len } else { u <= acc as f64 + len };
+            let inside = if prefer_later {
+                u < acc as f64 + len
+            } else {
+                u <= acc as f64 + len
+            };
             if inside {
                 return a + (u - acc as f64).round().max(0.0) as u64;
             }
@@ -574,7 +607,13 @@ impl Mapper {
         if self.w.is_empty() || self.d.is_empty() {
             return t;
         }
-        let idx = |i: usize| self.island_of.get(i).copied().unwrap_or(0).min(self.d.len() - 1);
+        let idx = |i: usize| {
+            self.island_of
+                .get(i)
+                .copied()
+                .unwrap_or(0)
+                .min(self.d.len() - 1)
+        };
         if t <= self.w[0].0 {
             return self.d[0].0;
         }
@@ -615,28 +654,50 @@ mod tests {
     use super::*;
 
     fn structure(speech: Vec<(u64, u64)>) -> Structure {
-        Structure { speech, gaps: vec![], duration_ms: 100_000, has_digital_silence: true }
+        Structure {
+            speech,
+            gaps: vec![],
+            duration_ms: 100_000,
+            has_digital_silence: true,
+        }
     }
 
     fn words(times: &[(u64, u64, &str)]) -> Vec<Word> {
         times
             .iter()
-            .map(|(a, b, t)| Word { start_ms: *a, end_ms: *b, text: t.to_string() })
+            .map(|(a, b, t)| Word {
+                start_ms: *a,
+                end_ms: *b,
+                text: t.to_string(),
+            })
             .collect()
     }
 
     fn chime(d: u64) -> Chime {
-        Chime { ding_ms: d, dong_ms: d + 600, ding_db: -16.0, dong_db: -23.0, confidence: 1.0 }
+        Chime {
+            ding_ms: d,
+            dong_ms: d + 600,
+            ding_db: -16.0,
+            dong_db: -23.0,
+            confidence: 1.0,
+        }
     }
 
     /// 仿射兜底：整体漂移修复 + 单调性
     #[test]
     fn affine_fixes_drift() {
         let st = structure(vec![(3000, 9000), (20000, 26000)]);
-        let w = words(&[(0, 1500, "first"), (1500, 3000, "second"), (20000, 23000, "fifth")]);
+        let w = words(&[
+            (0, 1500, "first"),
+            (1500, 3000, "second"),
+            (20000, 23000, "fifth"),
+        ]);
         let s = snap_by_mode(&w, &st, SnapMode::Affine);
         assert!((s[0].start_ms as i64 - 3000).abs() < 200, "{:?}", s[0]);
-        assert!(s.windows(2).all(|x| x[1].start_ms >= x[0].start_ms), "{s:?}");
+        assert!(
+            s.windows(2).all(|x| x[1].start_ms >= x[0].start_ms),
+            "{s:?}"
+        );
     }
 
     /// 地标对齐：念白 "Text N" 与叮咚成对，且第一个叮咚没有对应念白时也能正确错位匹配
@@ -665,7 +726,10 @@ mod tests {
             "Text one 应吸附到 ~10 s，实际 {}",
             t1.start_ms
         );
-        assert!(s.windows(2).all(|x| x[1].start_ms >= x[0].start_ms), "单调性: {s:?}");
+        assert!(
+            s.windows(2).all(|x| x[1].start_ms >= x[0].start_ms),
+            "单调性: {s:?}"
+        );
     }
 
     /// 无念白时退化为仿射，不报错
@@ -673,7 +737,11 @@ mod tests {
     fn falls_back_to_affine_without_markers() {
         let st = structure(vec![(2000, 8000), (30000, 40000)]);
         let chimes = vec![chime(8000)];
-        let w = words(&[(0, 1000, "hello"), (1000, 2000, "world"), (28000, 30000, "bye")]);
+        let w = words(&[
+            (0, 1000, "hello"),
+            (1000, 2000, "world"),
+            (28000, 30000, "bye"),
+        ]);
         let s = snap_with_landmarks(&w, &st, &chimes);
         assert_eq!(s.len(), 3);
         assert!(s[0].start_ms >= 2000);
@@ -692,7 +760,10 @@ mod tests {
         ]);
         let s = snap_by_mode(&w, &st, SnapMode::Ratio);
         for (a, b) in w.iter().zip(s.iter()) {
-            assert!((a.start_ms as i64 - b.start_ms as i64).abs() < 150, "{a:?} -> {b:?}");
+            assert!(
+                (a.start_ms as i64 - b.start_ms as i64).abs() < 150,
+                "{a:?} -> {b:?}"
+            );
         }
     }
 
@@ -705,7 +776,10 @@ mod tests {
         // “b” 原本落在 3000–6000 的静音里 → 应被推到最近的岛边（3000 或 6000）
         let b = fixed.iter().find(|x| x.text == "b").unwrap();
         assert!(b.start_ms == 3000 || b.start_ms == 6000, "{b:?}");
-        assert!(fixed.windows(2).all(|x| x[1].start_ms >= x[0].start_ms), "保序: {fixed:?}");
+        assert!(
+            fixed.windows(2).all(|x| x[1].start_ms >= x[0].start_ms),
+            "保序: {fixed:?}"
+        );
     }
 
     /// 念白标记位置必须取关键词所在词（中文长句陷阱）

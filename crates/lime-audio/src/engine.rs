@@ -155,9 +155,16 @@ impl Engine {
         let worker = std::thread::Builder::new()
             .name("lime-transport".into())
             .spawn(move || {
-                if let Err(e) =
-                    worker_loop(&path_buf, &sh, tx, recycle_rx, cmd_rx, device_rate, device_channels, start_pos_ms)
-                {
+                if let Err(e) = worker_loop(
+                    &path_buf,
+                    &sh,
+                    tx,
+                    recycle_rx,
+                    cmd_rx,
+                    device_rate,
+                    device_channels,
+                    start_pos_ms,
+                ) {
                     eprintln!("[lime-audio] transport 线程结束: {e}");
                 }
             })
@@ -330,6 +337,7 @@ where
 ///
 /// 性能：所有中间缓冲（解码块 / 声道归一化 / 重采样 / 输出）都在循环外分配一次并复用；
 /// 输出 Vec 由回调通过 `recycle_rx` 归还后再用，稳态下**每块不再有堆分配**。
+#[allow(clippy::too_many_arguments)]
 fn worker_loop(
     path: &Path,
     shared: &Arc<Shared>,
@@ -351,7 +359,11 @@ fn worker_loop(
         None
     };
     let mut playing = false;
-    let mut pending_seek: Option<u64> = if start_pos_ms > 0 { Some(start_pos_ms) } else { None };
+    let mut pending_seek: Option<u64> = if start_pos_ms > 0 {
+        Some(start_pos_ms)
+    } else {
+        None
+    };
     let mut resume_at: Option<u64> = None;
     let mut src_fed: u64 = if start_pos_ms > 0 {
         (start_pos_ms as f64 / 1000.0 * src_rate as f64) as u64
@@ -405,7 +417,9 @@ fn worker_loop(
                     resume_at = None;
                     if !playing {
                         // 暂停态跳转：直接定位并更新显示位置
-                        shared.pos_ms.store(ms.min(shared.duration_ms.load(Relaxed)), Relaxed);
+                        shared
+                            .pos_ms
+                            .store(ms.min(shared.duration_ms.load(Relaxed)), Relaxed);
                     }
                     gen += 1;
                     shared.gen.store(gen, Relaxed);
@@ -490,8 +504,7 @@ fn worker_loop(
             &src_block
         } else if src_ch == 1 {
             norm.reserve(frames * device_channels);
-            for f in 0..frames {
-                let v = src_block[f];
+            for &v in src_block.iter().take(frames) {
                 for _ in 0..device_channels {
                     norm.push(v);
                 }
@@ -604,7 +617,11 @@ fn worker_loop(
     }
 }
 
-fn send_block(tx: &Sender<(u64, Vec<f32>)>, gen: u64, block: Vec<f32>) -> std::result::Result<(), ()> {
+fn send_block(
+    tx: &Sender<(u64, Vec<f32>)>,
+    gen: u64,
+    block: Vec<f32>,
+) -> std::result::Result<(), ()> {
     let mut b = block;
     loop {
         match tx.try_send((gen, b)) {
@@ -686,7 +703,11 @@ mod tests {
         while t0.elapsed() < Duration::from_secs(2) && shared.pos_ms() > 1000 {
             std::thread::sleep(Duration::from_millis(10));
         }
-        assert!(shared.pos_ms() <= 1000, "seek 后位置 {} 未回退", shared.pos_ms());
+        assert!(
+            shared.pos_ms() <= 1000,
+            "seek 后位置 {} 未回退",
+            shared.pos_ms()
+        );
 
         let _ = cmd_tx.send(Cmd::Quit);
         let _ = worker.join();
@@ -697,7 +718,10 @@ mod tests {
     #[test]
     fn worker_loop_starts_at_specified_position() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("lime_engine_start_pos_test_{}.wav", std::process::id()));
+        let path = dir.join(format!(
+            "lime_engine_start_pos_test_{}.wav",
+            std::process::id()
+        ));
         write_test_wav(&path, 48_000, 3); // 3 秒音频
 
         let shared = Arc::new(Shared::default());

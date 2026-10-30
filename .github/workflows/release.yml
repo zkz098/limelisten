@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '发布版本号 (例如 v0.1.0 或 0.1.0)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build Windows Release
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Determine Version
+        id: get_version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            TAG="${{ github.event.inputs.version }}"
+          else
+            TAG="${GITHUB_REF#refs/tags/}"
+          fi
+          echo "VERSION=$TAG" >> $GITHUB_OUTPUT
+
+      # 使用 xtask 打包并注入 target-cpu=x86-64-v3 与 target-feature=+crt-static
+      - name: Build & Assemble Portable via xtask
+        shell: bash
+        run: cargo xtask dist --version "${{ steps.get_version.outputs.VERSION }}"
+
+      # 打包成 ZIP 并生成校验和
+      - name: Compress & Checksum
+        shell: pwsh
+        run: |
+          $ver = "${{ steps.get_version.outputs.VERSION }}".TrimStart('v')
+          $pkgName = "limelisten-v$ver-windows-x86_64"
+          $distDir = "target/dist/$pkgName"
+          $zipName = "$pkgName.zip"
+          
+          Compress-Archive -Path $distDir -DestinationPath $zipName
+          
+          $hash = (Get-FileHash -Path $zipName -Algorithm SHA256).Hash.ToLower()
+          "$hash  $zipName" | Out-File -FilePath "$zipName.sha256" -Encoding ascii
+          
+          echo "ZIP_PATH=$zipName" >> $env:GITHUB_ENV
+          echo "SHA_PATH=$zipName.sha256" >> $env:GITHUB_ENV
+
+      # 上传至 GitHub Release
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: "LimeListen ${{ steps.get_version.outputs.VERSION }}"
+          draft: false
+          prerelease: ${{ contains(steps.get_version.outputs.VERSION, 'alpha') || contains(steps.get_version.outputs.VERSION, 'beta') || contains(steps.get_version.outputs.VERSION, 'rc') }}
+          generate_release_notes: true
+          files: |
+            ${{ env.ZIP_PATH }}
+            ${{ env.SHA_PATH }}

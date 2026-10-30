@@ -27,7 +27,12 @@ impl Decoder {
             hint.with_extension(ext);
         }
         let probed = symphonia::default::get_probe()
-            .format(&hint, mss, &FormatOptions::default(), &MetadataOptions::default())
+            .format(
+                &hint,
+                mss,
+                &FormatOptions::default(),
+                &MetadataOptions::default(),
+            )
             .map_err(|e| Error::Decode(e.to_string()))?;
         let format = probed.format;
         let track = format
@@ -38,12 +43,15 @@ impl Decoder {
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|e| Error::Decode(e.to_string()))?;
         let sample_rate = track.codec_params.sample_rate.unwrap_or(44_100);
-        let channels = track
-            .codec_params
-            .channels
-            .map(|c| c.count())
-            .unwrap_or(2);
-        Ok(Self { format, decoder, track_id, sample_rate, channels, buf: Vec::new() })
+        let channels = track.codec_params.channels.map(|c| c.count()).unwrap_or(2);
+        Ok(Self {
+            format,
+            decoder,
+            track_id,
+            sample_rate,
+            channels,
+            buf: Vec::new(),
+        })
     }
 
     /// 解出一批交错 f32 样本；返回 None 表示到达文件末尾。
@@ -93,7 +101,13 @@ impl Decoder {
         use symphonia::core::formats::SeekTo;
         let time = symphonia::core::units::Time::from(ms as f64 / 1000.0);
         self.format
-            .seek(SeekMode::Accurate, SeekTo::Time { time, track_id: Some(self.track_id) })
+            .seek(
+                SeekMode::Accurate,
+                SeekTo::Time {
+                    time,
+                    track_id: Some(self.track_id),
+                },
+            )
             .map_err(|e| Error::Decode(e.to_string()))?;
         self.decoder.reset();
         Ok(())

@@ -90,7 +90,9 @@ fn main() -> anyhow::Result<()> {
             cli::cmd_assert(&files)
         }
         Some("--transcribe") => {
-            let f = args.get(1).expect("用法: limelisten --transcribe <音频> [句数]");
+            let f = args
+                .get(1)
+                .expect("用法: limelisten --transcribe <音频> [句数]");
             let n: usize = args.get(2).and_then(|s| s.parse().ok()).unwrap_or(10);
             cli::cmd_transcribe(f, n)
         }
@@ -100,7 +102,9 @@ fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Some("--show-limed") => {
-            let f = args.get(1).expect("用法: limelisten --show-limed <limed文件>");
+            let f = args
+                .get(1)
+                .expect("用法: limelisten --show-limed <limed文件>");
             cli::cmd_show_limed(f)
         }
         Some("--chapters") => {
@@ -173,7 +177,8 @@ fn playtest(path: &Path) -> anyhow::Result<()> {
 
     let t0 = std::time::Instant::now();
     eng.seek_ms(60_000);
-    while t0.elapsed() < Duration::from_millis(600) && eng.shared().pos_ms().abs_diff(60_000) > 900 {
+    while t0.elapsed() < Duration::from_millis(600) && eng.shared().pos_ms().abs_diff(60_000) > 900
+    {
         sleep(Duration::from_millis(10));
     }
     let lat = t0.elapsed();

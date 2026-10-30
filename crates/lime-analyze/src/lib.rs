@@ -13,7 +13,9 @@ pub mod repeat;
 pub mod snap;
 
 pub use chime::{detect_chimes, Chime, ChimeParams};
-pub use repeat::{merge_repeated_materials, merge_repeated_materials_with, RepeatMerge, RepeatParams};
+pub use repeat::{
+    merge_repeated_materials, merge_repeated_materials_with, RepeatMerge, RepeatParams,
+};
 
 /// 分析参数（可在参数面板里调，用于"只给参数面板重跑"的修正路径）。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -80,8 +82,12 @@ impl Gap {
 
 /// 10 ms 级能量包络（dBFS）。
 pub fn energy_envelope(samples: &[f32], sample_rate: u32, params: &AnalyzeParams) -> Vec<f32> {
-    let frame = ((params.frame_ms / 1000.0) * sample_rate as f32).round().max(1.0) as usize;
-    let hop = ((params.hop_ms / 1000.0) * sample_rate as f32).round().max(1.0) as usize;
+    let frame = ((params.frame_ms / 1000.0) * sample_rate as f32)
+        .round()
+        .max(1.0) as usize;
+    let hop = ((params.hop_ms / 1000.0) * sample_rate as f32)
+        .round()
+        .max(1.0) as usize;
     if samples.len() < frame {
         return Vec::new();
     }
@@ -123,7 +129,9 @@ fn classify(dur_s: f32, p: &AnalyzeParams) -> Option<GapKind> {
 /// （例：44.1 kHz 下 5 ms = 220.5 → 221 样本 = 5.0113 ms）。
 /// 这里用**真实帧移**做下标→时间换算；否则 932 s 的文件末尾会漂移约 2 s。
 pub fn detect_structure(env: &[f32], sample_rate: u32, params: &AnalyzeParams) -> Structure {
-    let hop_samples = ((params.hop_ms / 1000.0) * sample_rate as f32).round().max(1.0);
+    let hop_samples = ((params.hop_ms / 1000.0) * sample_rate as f32)
+        .round()
+        .max(1.0);
     let hop_ms = hop_samples as f64 / sample_rate as f64 * 1000.0;
     let total_ms = (env.len() as f64 * hop_ms) as u64;
     let mut speech = Vec::new();
@@ -136,7 +144,10 @@ pub fn detect_structure(env: &[f32], sample_rate: u32, params: &AnalyzeParams) -
             while j + 1 < env.len() && env[j + 1] > params.silence_db {
                 j += 1;
             }
-            speech.push(((start as f64 * hop_ms) as u64, ((j + 1) as f64 * hop_ms) as u64));
+            speech.push((
+                (start as f64 * hop_ms) as u64,
+                ((j + 1) as f64 * hop_ms) as u64,
+            ));
             i = j + 1;
         } else {
             let start = i;
@@ -147,12 +158,21 @@ pub fn detect_structure(env: &[f32], sample_rate: u32, params: &AnalyzeParams) -
             let s_ms = (start as f64 * hop_ms) as u64;
             let e_ms = ((j + 1) as f64 * hop_ms) as u64;
             if let Some(kind) = classify((e_ms - s_ms) as f32 / 1000.0, params) {
-                gaps.push(Gap { start_ms: s_ms, end_ms: e_ms, kind });
+                gaps.push(Gap {
+                    start_ms: s_ms,
+                    end_ms: e_ms,
+                    kind,
+                });
             }
             i = j + 1;
         }
     }
-    Structure { speech, gaps, duration_ms: total_ms, has_digital_silence: false }
+    Structure {
+        speech,
+        gaps,
+        duration_ms: total_ms,
+        has_digital_silence: false,
+    }
 }
 
 /// 数字静音检测：连续样值恒为 0 的区间（实测本类素材存在，是极强结构信号）。
@@ -239,10 +259,15 @@ pub fn collect_boundaries(
         .collect();
     let mut chime_used = vec![false; chimes.len()];
 
-    for g in structure.gaps.iter().filter(|g| g.kind == GapKind::Material) {
+    for g in structure
+        .gaps
+        .iter()
+        .filter(|g| g.kind == GapKind::Material)
+    {
         // 找落在该间隙附近（间隙内 或 间隙结束后 1.5 s 内）的叮咚
         let mut hit: Option<usize> = None;
-        for (i, c) in chimes.iter().enumerate() {            if chime_used[i] {
+        for (i, c) in chimes.iter().enumerate() {
+            if chime_used[i] {
                 continue;
             }
             let d = c.ding_ms as i64;
@@ -330,7 +355,11 @@ pub fn build_chapters(
 
     // 材料区间：以分界点为界，首尾由实际语音裁掉空白
     let first_speech = structure.speech.first().map(|s| s.0).unwrap_or(0);
-    let last_speech = structure.speech.last().map(|s| s.1).unwrap_or(structure.duration_ms);
+    let last_speech = structure
+        .speech
+        .last()
+        .map(|s| s.1)
+        .unwrap_or(structure.duration_ms);
 
     let mut ranges: Vec<(u64, u64, f32, bool, bool)> = Vec::new();
     let mut cursor = first_speech;
@@ -372,7 +401,11 @@ pub fn build_chapters(
             start_ms: *start,
             end_ms: *end,
             title: mat_title,
-            source: if *from_chime { ChapterSource::Asr } else { ChapterSource::Structure },
+            source: if *from_chime {
+                ChapterSource::Asr
+            } else {
+                ChapterSource::Structure
+            },
             confidence: *conf,
             locked: false,
         });
@@ -382,9 +415,7 @@ pub fn build_chapters(
         let mut q_bounds: Vec<u64> = structure
             .gaps
             .iter()
-            .filter(|g| {
-                g.kind == GapKind::Question && g.end_ms > *start && g.start_ms < *end
-            })
+            .filter(|g| g.kind == GapKind::Question && g.end_ms > *start && g.start_ms < *end)
             .map(|g| g.end_ms.min(*end))
             .collect();
         for a in anchors.iter().filter(|a| a.is_question_boundary()) {
@@ -470,8 +501,16 @@ mod tests {
         let structure = Structure {
             speech: vec![(0, 19_988), (30_000, 40_000)],
             gaps: vec![
-                Gap { start_ms: 19_988, end_ms: 20_000, kind: GapKind::Question },
-                Gap { start_ms: 20_000, end_ms: 30_000, kind: GapKind::Material },
+                Gap {
+                    start_ms: 19_988,
+                    end_ms: 20_000,
+                    kind: GapKind::Question,
+                },
+                Gap {
+                    start_ms: 20_000,
+                    end_ms: 30_000,
+                    kind: GapKind::Material,
+                },
             ],
             duration_ms: 40_000,
             has_digital_silence: true,
@@ -491,7 +530,11 @@ mod tests {
     fn boundary_merge_boosts_confidence() {
         let structure = Structure {
             speech: vec![(0, 5000), (15000, 20000)],
-            gaps: vec![Gap { start_ms: 5000, end_ms: 15000, kind: GapKind::Material }],
+            gaps: vec![Gap {
+                start_ms: 5000,
+                end_ms: 15000,
+                kind: GapKind::Material,
+            }],
             duration_ms: 20000,
             has_digital_silence: true,
         };
@@ -508,7 +551,10 @@ mod tests {
         assert!(b[0].confidence > 0.95);
         let chapters = build_chapters(&structure, &[], &[chime], &AnalyzeParams::default());
         assert!(lime_core::chapters_are_canonical(&chapters), "{chapters:?}");
-        let m: Vec<_> = chapters.iter().filter(|c| c.level == ChapterLevel::Material).collect();
+        let m: Vec<_> = chapters
+            .iter()
+            .filter(|c| c.level == ChapterLevel::Material)
+            .collect();
         assert_eq!(m.len(), 2, "{chapters:?}");
         assert_eq!(m[0].start_ms, 0);
         assert_eq!(m[0].end_ms, 5000);

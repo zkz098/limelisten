@@ -4,7 +4,9 @@ use cpal::traits::{DeviceTrait, HostTrait};
 fn main() {
     let host = cpal::default_host();
     println!("host: {:?}", host.id());
-    let dev = host.default_output_device().expect("no default output device");
+    let dev = host
+        .default_output_device()
+        .expect("no default output device");
     println!("default output: {:?}", dev.description());
     match dev.default_output_config() {
         Ok(c) => println!(

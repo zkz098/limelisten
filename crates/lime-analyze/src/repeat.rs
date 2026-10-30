@@ -10,6 +10,7 @@
 //! 用 Sørensen–Dice 系数 `2·LCS/(|a|+|b|)` 作为相似度。实测 4 个素材：
 //! - 真正的两遍：0.97 / 1.00；
 //! - 所有相邻的不同材料：≤ 0.20。
+//!
 //! 阈值 0.65、最少 8 词，有巨大余量。中文念白（无 ASCII 词元）天然被跳过。
 //!
 //! 合并结果：一份 `Material` 覆盖两遍，两个「第 1 遍 / 第 2 遍」`Question` 子章节
@@ -30,7 +31,11 @@ pub struct RepeatParams {
 
 impl Default for RepeatParams {
     fn default() -> Self {
-        Self { min_tokens: 8, min_similarity: 0.65, max_len_ratio: 2.5 }
+        Self {
+            min_tokens: 8,
+            min_similarity: 0.65,
+            max_len_ratio: 2.5,
+        }
     }
 }
 
@@ -57,17 +62,20 @@ pub fn merge_repeated_materials_with(
     let list = normalize_chapters(chapters);
     let n = list.len();
     if n == 0 {
-        return RepeatMerge { chapters: list, merged: 0 };
+        return RepeatMerge {
+            chapters: list,
+            merged: 0,
+        };
     }
 
     // 题的父材料下标（normalize 之后已重建，可靠）
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); n];
     let mut loose: Vec<usize> = Vec::new();
-    for i in 0..n {
-        if list[i].is_material() {
+    for (i, item) in list.iter().enumerate() {
+        if item.is_material() {
             continue;
         }
-        match list[i].parent {
+        match item.parent {
             Some(m) if m < n => children[m].push(i),
             _ => loose.push(i),
         }
@@ -79,7 +87,9 @@ pub fn merge_repeated_materials_with(
     let mut merged = 0usize;
 
     // 预先算好每份材料的词元，避免重复扫描句子
-    let tokens: Vec<Vec<String>> = (0..n).map(|i| material_tokens(&list[i], sentences)).collect();
+    let tokens: Vec<Vec<String>> = (0..n)
+        .map(|i| material_tokens(&list[i], sentences))
+        .collect();
 
     for (pos, &mi) in mats.iter().enumerate() {
         if consumed[mi] {
@@ -119,7 +129,11 @@ pub fn merge_repeated_materials_with(
         merged += run.len() - 1;
         let mut mat = list[mi].clone();
         mat.start_ms = list[mi].start_ms;
-        mat.end_ms = run.iter().map(|&m| list[m].end_ms).max().unwrap_or(list[mi].end_ms);
+        mat.end_ms = run
+            .iter()
+            .map(|&m| list[m].end_ms)
+            .max()
+            .unwrap_or(list[mi].end_ms);
         mat.level = ChapterLevel::Material;
         mat.parent = None;
         mat.locked = false;
@@ -140,7 +154,10 @@ pub fn merge_repeated_materials_with(
         out.push(list[i].clone());
     }
 
-    RepeatMerge { chapters: normalize_chapters(&out), merged }
+    RepeatMerge {
+        chapters: normalize_chapters(&out),
+        merged,
+    }
 }
 
 /// 一份材料时间范围内的英文词元（小写、只留 ASCII 字母数字）。
@@ -182,7 +199,11 @@ fn lcs_len(a: &[String], b: &[String]) -> usize {
     let mut cur = vec![0usize; b.len() + 1];
     for x in a {
         for (j, y) in b.iter().enumerate() {
-            cur[j + 1] = if x == y { prev[j] + 1 } else { prev[j + 1].max(cur[j]) };
+            cur[j + 1] = if x == y {
+                prev[j] + 1
+            } else {
+                prev[j + 1].max(cur[j])
+            };
         }
         std::mem::swap(&mut prev, &mut cur);
     }
@@ -260,7 +281,11 @@ mod tests {
         let chapters = vec![mat(0, 0, 12_000), mat(1, 13_000, 25_000)];
         let sentences = vec![
             reading_a(0),
-            sent(13_000, 23_000, "the quick brown fox jumps over the lazy dog every single morning"),
+            sent(
+                13_000,
+                23_000,
+                "the quick brown fox jumps over the lazy dog every single morning",
+            ),
         ];
         let rep = merge_repeated_materials_with(&chapters, &sentences, &RepeatParams::default());
         assert_eq!(rep.merged, 0);

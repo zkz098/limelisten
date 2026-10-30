@@ -36,7 +36,9 @@ pub const DEFAULT_LANGUAGE: &str = "en";
 /// whisper.cpp 默认吃满所有核；在 2–4 核的低端机上这会让界面卡顿、音频欠载。
 /// 1 核机器上不打算再留（`max(1)`），否则就没法跑。
 pub fn default_threads() -> usize {
-    let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
     cores.saturating_sub(1).max(1)
 }
 
@@ -62,7 +64,12 @@ pub struct Progress {
 
 impl WhisperCli {
     pub fn new(exe: impl Into<PathBuf>, model: impl Into<PathBuf>) -> Self {
-        Self { exe: exe.into(), model: model.into(), threads: default_threads(), language: DEFAULT_LANGUAGE.into() }
+        Self {
+            exe: exe.into(),
+            model: model.into(),
+            threads: default_threads(),
+            language: DEFAULT_LANGUAGE.into(),
+        }
     }
 
     /// 逐词转写。`out_base` 为输出文件前缀（生成 `<base>.json`）。
@@ -166,7 +173,10 @@ pub fn pipeline_fingerprint(model: Option<&Path>, language: &str) -> String {
         }
         None => "none".into(),
     };
-    format!("{}|model={model_desc}", pipeline_params_fingerprint(language))
+    format!(
+        "{}|model={model_desc}",
+        pipeline_params_fingerprint(language)
+    )
 }
 
 /// 解析 `whisper_print_progress_callback: progress = 42%` 这类进度行。
@@ -192,17 +202,36 @@ pub fn parse_words_json(raw: &str) -> Result<Vec<Word>> {
         .ok_or_else(|| Error::Asr("missing `transcription`".into()))?;
     let mut out = Vec::with_capacity(arr.len());
     for item in arr {
-        let from = item.pointer("/offsets/from").and_then(|x| x.as_u64()).unwrap_or(0);
-        let to = item.pointer("/offsets/to").and_then(|x| x.as_u64()).unwrap_or(from);
-        let text = item.get("text").and_then(|x| x.as_str()).unwrap_or("").to_string();
-        out.push(Word { start_ms: from, end_ms: to, text });
+        let from = item
+            .pointer("/offsets/from")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(0);
+        let to = item
+            .pointer("/offsets/to")
+            .and_then(|x| x.as_u64())
+            .unwrap_or(from);
+        let text = item
+            .get("text")
+            .and_then(|x| x.as_str())
+            .unwrap_or("")
+            .to_string();
+        out.push(Word {
+            start_ms: from,
+            end_ms: to,
+            text,
+        });
     }
     Ok(out)
 }
 
 /// 句子重组：标点 + 词间停顿（默认 0.4 s）切句，单句 ≤ max_words / ≤ max_ms。
 /// 依据 docs/PLAN.md §4-⑧。
-pub fn group_sentences(words: &[Word], gap_s: f32, max_words: usize, max_ms: u64) -> Vec<Vec<usize>> {
+pub fn group_sentences(
+    words: &[Word],
+    gap_s: f32,
+    max_words: usize,
+    max_ms: u64,
+) -> Vec<Vec<usize>> {
     let gap_ms = (gap_s * 1000.0) as u64;
     let mut out: Vec<Vec<usize>> = Vec::new();
     let mut cur: Vec<usize> = Vec::new();
@@ -216,8 +245,10 @@ pub fn group_sentences(words: &[Word], gap_s: f32, max_words: usize, max_ms: u64
         let long_pause = !cur.is_empty() && pause >= gap_ms;
         let too_long = cur.len() >= max_words
             || (!cur.is_empty() && w.end_ms - words[cur[0]].start_ms > max_ms);
-        let ends_sentence =
-            text.ends_with('.') || text.ends_with('?') || text.ends_with('!') || text.ends_with('。');
+        let ends_sentence = text.ends_with('.')
+            || text.ends_with('?')
+            || text.ends_with('!')
+            || text.ends_with('。');
         if !cur.is_empty() && (long_pause || too_long) {
             out.push(std::mem::take(&mut cur));
         }
@@ -295,7 +326,10 @@ pub fn anchors_from_words(words: &[Word]) -> Vec<Anchor> {
 }
 
 fn push_unique(out: &mut Vec<Anchor>, a: Anchor) {
-    if out.last().map(|l| l.kind == a.kind && a.time_ms.saturating_sub(l.time_ms) < 1500).unwrap_or(false)
+    if out
+        .last()
+        .map(|l| l.kind == a.kind && a.time_ms.saturating_sub(l.time_ms) < 1500)
+        .unwrap_or(false)
     {
         return;
     }
@@ -319,7 +353,10 @@ mod tests {
     #[test]
     fn pipeline_fingerprint_covers_params_lang_model() {
         let no_model = pipeline_fingerprint(None, "en");
-        assert!(no_model.contains("mc=0"), "指纹要能反映重复幻觉的修复: {no_model}");
+        assert!(
+            no_model.contains("mc=0"),
+            "指纹要能反映重复幻觉的修复: {no_model}"
+        );
         assert!(no_model.contains("lang=en"));
         assert!(no_model.contains("model=none"));
 
@@ -352,7 +389,9 @@ mod tests {
     /// 转写必须留出至少一个核给 UI/音频，且不能超过可用核数。
     #[test]
     fn default_threads_reserves_a_core() {
-        let cores = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(2);
+        let cores = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(2);
         let t = default_threads();
         assert!(t >= 1, "至少要能跑（1 核机器）");
         assert!(t <= cores, "不能超过可用核数");

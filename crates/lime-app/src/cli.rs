@@ -3,8 +3,8 @@
 use crate::paths;
 use anyhow::{anyhow, Result};
 use lime_analyze::{
-    build_chapters, detect_chimes, detect_structure, energy_envelope,
-    AnalyzeParams, Chime, GapKind, Structure,
+    build_chapters, detect_chimes, detect_structure, energy_envelope, AnalyzeParams, Chime,
+    GapKind, Structure,
 };
 use lime_asr::{group_sentences, WhisperCli};
 use lime_audio::resample::LinearResampler;
@@ -199,7 +199,9 @@ pub fn asr_fingerprint() -> Option<String> {
 /// 只含解码参数 + 语言的指纹：`.limed` 这类可拷贝分享的缓存按它判有效，
 /// 换机器/换模型播放不会失效。
 pub fn asr_params_fingerprint() -> Option<String> {
-    Some(lime_asr::pipeline_params_fingerprint(lime_asr::DEFAULT_LANGUAGE))
+    Some(lime_asr::pipeline_params_fingerprint(
+        lime_asr::DEFAULT_LANGUAGE,
+    ))
 }
 
 /// 转写所用模型的名字（落库展示用）。
@@ -230,14 +232,11 @@ pub struct Transcript {
     pub landmarks: Vec<(u64, u64)>,
 }
 
-pub fn transcribe(
-    core: &AnalysisCore,
-    mut progress: impl FnMut(&str, f32),
-) -> Result<Transcript> {
+pub fn transcribe(core: &AnalysisCore, mut progress: impl FnMut(&str, f32)) -> Result<Transcript> {
     let exe = paths::find_whisper_exe()
         .ok_or_else(|| anyhow!("找不到 whisper-cli.exe（可在 GUI「测速与模型」里一键下载，或放到 tools/whisper/<cuda|blas>/Release/）"))?;
-    let model = paths::default_model()
-        .ok_or_else(|| anyhow!("找不到 ggml 模型（请放到 models/ 目录）"))?;
+    let model =
+        paths::default_model().ok_or_else(|| anyhow!("找不到 ggml 模型（请放到 models/ 目录）"))?;
 
     let key = paths::cache_key(&core.path);
     let wav = wav_16k_path(&core.path);
@@ -288,7 +287,12 @@ pub fn transcribe(
         })
         .collect();
 
-    Ok(Transcript { raw_words, words, sentences, landmarks })
+    Ok(Transcript {
+        raw_words,
+        words,
+        sentences,
+        landmarks,
+    })
 }
 
 /// 把句子归属到“题”级章节（没有题级则归属材料级）
@@ -337,7 +341,10 @@ pub fn cmd_analyze(file: &str) -> Result<()> {
         n(GapKind::Question),
         n(GapKind::Sentence)
     );
-    println!("chimes: {}（叮 2578Hz → 咚 2039Hz，Δ≈0.59s）", core.chimes.len());
+    println!(
+        "chimes: {}（叮 2578Hz → 咚 2039Hz，Δ≈0.59s）",
+        core.chimes.len()
+    );
     for c in core.chimes.iter().take(40) {
         println!(
             "    叮咚 叮 {:>9} ({:6.1}dB) -> 咚 {:>9} ({:6.1}dB) conf={:.2}",
@@ -360,7 +367,13 @@ pub fn cmd_assert(files: &[String]) -> Result<()> {
     for f in files {
         let core = analyze(Path::new(f), |_| {})?;
         let rep = assertions(&core, &params);
-        println!("==== {} ====", Path::new(f).file_name().unwrap_or_default().to_string_lossy());
+        println!(
+            "==== {} ====",
+            Path::new(f)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+        );
         for l in &rep.lines {
             println!("  {l}");
         }
@@ -388,7 +401,9 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
     let mut a_ok = 0usize;
     for b in &bounds {
         let in_gap = core.structure.gaps.iter().any(|g| {
-            g.kind != GapKind::Sentence && g.start_ms <= b.next_start_ms && g.end_ms >= b.next_start_ms
+            g.kind != GapKind::Sentence
+                && g.start_ms <= b.next_start_ms
+                && g.end_ms >= b.next_start_ms
         });
         let near_chime = core
             .chimes
@@ -403,7 +418,10 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
             ));
         }
     }
-    lines.push(format!("A: 边界定位合理 {a_ok}/{}（要求 100%）", bounds.len()));
+    lines.push(format!(
+        "A: 边界定位合理 {a_ok}/{}（要求 100%）",
+        bounds.len()
+    ));
     if a_ok != bounds.len() {
         pass = false;
     }
@@ -417,7 +435,11 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
     let mut b_ok = true;
     for w in mats.windows(2) {
         if w[1].start_ms < w[0].end_ms {
-            lines.push(format!("B FAIL: 材料重叠 {} -> {}", fmt_ms(w[0].end_ms), fmt_ms(w[1].start_ms)));
+            lines.push(format!(
+                "B FAIL: 材料重叠 {} -> {}",
+                fmt_ms(w[0].end_ms),
+                fmt_ms(w[1].start_ms)
+            ));
             b_ok = false;
             continue;
         }
@@ -433,7 +455,11 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
                 .iter()
                 .any(|c| c.ding_ms >= a && c.dong_ms <= b + 500);
             if !(in_gap || has_chime) {
-                lines.push(format!("B FAIL: 材料间空隙不属于答题间隔/叮咚 {} – {}", fmt_ms(a), fmt_ms(b)));
+                lines.push(format!(
+                    "B FAIL: 材料间空隙不属于答题间隔/叮咚 {} – {}",
+                    fmt_ms(a),
+                    fmt_ms(b)
+                ));
                 b_ok = false;
             }
         }
@@ -445,8 +471,16 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
     let covered = mats.first().map(|m| m.start_ms).unwrap_or(0)
         == core.structure.speech.first().map(|s| s.0).unwrap_or(0)
         && mats.last().map(|m| m.end_ms).unwrap_or(0)
-            == core.structure.speech.last().map(|s| s.1).unwrap_or(core.info.duration_ms);
-    lines.push(format!("B: 不重叠+非空+覆盖语音首尾 {}", if covered && b_ok { "是" } else { "否" }));
+            == core
+                .structure
+                .speech
+                .last()
+                .map(|s| s.1)
+                .unwrap_or(core.info.duration_ms);
+    lines.push(format!(
+        "B: 不重叠+非空+覆盖语音首尾 {}",
+        if covered && b_ok { "是" } else { "否" }
+    ));
     pass &= b_ok && covered;
 
     // C. 强叮咚与边界重合率
@@ -457,11 +491,18 @@ pub fn assertions(core: &AnalysisCore, params: &AnalyzeParams) -> AssertReport {
         .collect();
     let mut c_ok = 0usize;
     for ch in &strong {
-        if bounds.iter().any(|b| (b.next_start_ms as i64 - ch.ding_ms as i64).abs() <= 1500) {
+        if bounds
+            .iter()
+            .any(|b| (b.next_start_ms as i64 - ch.ding_ms as i64).abs() <= 1500)
+        {
             c_ok += 1;
         }
     }
-    let rate = if strong.is_empty() { 1.0 } else { c_ok as f32 / strong.len() as f32 };
+    let rate = if strong.is_empty() {
+        1.0
+    } else {
+        c_ok as f32 / strong.len() as f32
+    };
     lines.push(format!(
         "C: 叮咚与边界重合 {c_ok}/{} = {:.0}%（要求 ≥80%）",
         strong.len(),
@@ -500,7 +541,10 @@ pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
         println!("转写管线指纹：{fp}");
     }
     println!("\n=== 地标诊断 ===");
-    println!("{}", lime_analyze::snap::landmark_diagnosis(&tr.raw_words, &core.structure, &core.chimes));
+    println!(
+        "{}",
+        lime_analyze::snap::landmark_diagnosis(&tr.raw_words, &core.structure, &core.chimes)
+    );
     if !tr.landmarks.is_empty() {
         println!("\n=== 地标配对（念白 Text-N ↔ 叮咚）===");
         for (w, r) in tr.landmarks.iter().take(12) {
@@ -533,8 +577,8 @@ pub fn cmd_transcribe(file: &str, show: usize) -> Result<()> {
     }
     println!("\n=== 吸附策略对比（只列带 text/one/two/three 的词）===");
     println!(
-        "   {:>12} {:>8} {:>9} {:>9} {:>9} {:>9}   {}",
-        "raw(ms)", "(s)", "index", "ratio", "affine", "地标", "text"
+        "   {:>12} {:>8} {:>9} {:>9} {:>9} {:>9}   text",
+        "raw(ms)", "(s)", "index", "ratio", "affine", "地标"
     );
     let mut shown = 0;
     for i in 0..tr.raw_words.len() {
@@ -606,7 +650,11 @@ pub fn print_chapter_tree(chapters: &[Chapter], limit: usize) {
         chapters.len(),
         n_mat,
         chapters.len() - n_mat,
-        if lime_core::chapters_are_canonical(chapters) { "✓" } else { "✗ (需要 normalize)" }
+        if lime_core::chapters_are_canonical(chapters) {
+            "✓"
+        } else {
+            "✗ (需要 normalize)"
+        }
     );
     for c in chapters.iter().take(limit) {
         let indent = if c.is_material() { "" } else { "    " };
@@ -719,7 +767,11 @@ pub fn cmd_export_limed(file: &str) -> Result<PathBuf> {
         asr_fp: asr_params_fingerprint().unwrap_or_default(),
     };
 
-    let limed = LimedFile::new(meta, lime_core::normalize_chapters(&core.chapters), sentences);
+    let limed = LimedFile::new(
+        meta,
+        lime_core::normalize_chapters(&core.chapters),
+        sentences,
+    );
     let out_path = path.with_extension("limed");
     limed.save(&out_path)?;
 
@@ -760,18 +812,29 @@ pub fn cmd_show_limed(file: &str) -> Result<()> {
     let fp_state = match asr_params_fingerprint() {
         None => "（未检测到转写指纹）".to_string(),
         Some(cur) if limed.meta.asr_fp == cur => "✓ 与当前转写参数一致".to_string(),
-        Some(_) if limed.meta.asr_fp.is_empty() => "✗ 旧格式/无指纹（字幕会失效，需重新转写）".to_string(),
+        Some(_) if limed.meta.asr_fp.is_empty() => {
+            "✗ 旧格式/无指纹（字幕会失效，需重新转写）".to_string()
+        }
         Some(_) => "✗ 与当前转写参数不一致（字幕会失效，需重新转写）".to_string(),
     };
     println!(
         "  字幕指纹: {fp_state}（{}）",
-        if limed.meta.asr_fp.is_empty() { "空" } else { limed.meta.asr_fp.as_str() }
+        if limed.meta.asr_fp.is_empty() {
+            "空"
+        } else {
+            limed.meta.asr_fp.as_str()
+        }
     );
     println!("\n[章节结构] 共 {} 节:", chapters.len());
     print_chapter_tree(&chapters, 15);
     println!("\n[字幕预览] 共 {} 句:", limed.sentences.len());
     for s in limed.sentences.iter().take(8) {
-        println!("  [{:>9} – {:>9}] {}", fmt_ms(s.start_ms), fmt_ms(s.end_ms), s.text);
+        println!(
+            "  [{:>9} – {:>9}] {}",
+            fmt_ms(s.start_ms),
+            fmt_ms(s.end_ms),
+            s.text
+        );
     }
     if limed.sentences.len() > 8 {
         println!("  ... 以及其他 {} 句字幕", limed.sentences.len() - 8);
@@ -806,7 +869,9 @@ pub fn prepare_benchmark_wav(sample_path: Option<&str>) -> Result<(PathBuf, f64)
             .into_iter()
             .find(|p| p.is_file())
             .ok_or_else(|| {
-                anyhow!("未找到可用于测速的样本音频，请通过 `limelisten --bench <音频>` 指定音频文件")
+                anyhow!(
+                    "未找到可用于测速的样本音频，请通过 `limelisten --bench <音频>` 指定音频文件"
+                )
             })?
     };
 
@@ -857,7 +922,9 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         anyhow!("找不到 whisper-cli.exe（请放置在 tools/whisper/ 或 .tools/ 目录）")
     })?;
     println!("Whisper 引擎: {}", exe.display());
-    println!("判定标准: 3:1 标准 (3 分钟音频需 1 分钟以内完成, 即倍速比 S >= 3.0x, 15s 耗时 <= 5.0s)");
+    println!(
+        "判定标准: 3:1 标准 (3 分钟音频需 1 分钟以内完成, 即倍速比 S >= 3.0x, 15s 耗时 <= 5.0s)"
+    );
     println!(
         "超时熔断: 若转写耗时 > {:.1}s (RTF > 1.0, 慢于原声播放), 将主动终止并跳至下一规格\n",
         audio_dur_s
@@ -994,7 +1061,9 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         "{:<8} {:<18} {:<24} {:<10} {:<10} {:<16}",
         "规格", "型号名称", "本地文件", "实测耗时", "转写倍速", "3:1标准判定"
     );
-    println!("----------------------------------------------------------------------------------------");
+    println!(
+        "----------------------------------------------------------------------------------------"
+    );
 
     let mut best_spec = None;
     let mut best_speedup = 0.0f64;
@@ -1040,7 +1109,9 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
         }
     }
 
-    println!("----------------------------------------------------------------------------------------");
+    println!(
+        "----------------------------------------------------------------------------------------"
+    );
     println!("【硬件适配最终建议】:");
     if let Some((spec, label, speedup)) = best_spec {
         println!("👉 推荐规格: [{label}] (代号: {spec})");

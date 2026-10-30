@@ -20,7 +20,11 @@ fn exe_dir() -> PathBuf {
 }
 
 fn candidates(rel: &str) -> Vec<PathBuf> {
-    vec![product_root().join(rel), project_root().join(rel), exe_dir().join(rel)]
+    vec![
+        product_root().join(rel),
+        project_root().join(rel),
+        exe_dir().join(rel),
+    ]
 }
 
 /// 运行时的“产品根目录”：优先 exe 旁边的 portable 目录结构，其次开发项目根。
@@ -173,8 +177,10 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
         desc: "高精度",
         approx_size_mb: 547,
         size_bytes: 574_041_195,
-        primary_url: "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
-        fallback_url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        primary_url:
+            "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+        fallback_url:
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
     },
     ModelSpecMeta {
         spec: "small",

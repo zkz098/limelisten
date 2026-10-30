@@ -25,7 +25,10 @@ fn embed_windows_resources() {
             "assets/limelisten.rc",
             embed_resource::ParamsMacrosAndIncludeDirs(
                 [
-                    format!("VER_NUM={}, {}, {}, {}", parts[0], parts[1], parts[2], parts[3]),
+                    format!(
+                        "VER_NUM={}, {}, {}, {}",
+                        parts[0], parts[1], parts[2], parts[3]
+                    ),
                     format!("VER_STR=\"{ver}\""),
                 ],
                 ["assets"], // 让 rc.exe 能在 assets/ 下找到 limelisten.ico
@@ -35,7 +38,8 @@ fn embed_windows_resources() {
         // 这里刻意不用 manifest_optional()：找不到 rc.exe 的情况它也算 Ok，
         // 结果就是「图标悄悄没了」。图标是发布物的一部分，宁可构建失败。
         match result {
-            embed_resource::CompilationResult::Ok | embed_resource::CompilationResult::NotWindows => {}
+            embed_resource::CompilationResult::Ok
+            | embed_resource::CompilationResult::NotWindows => {}
             other => panic!("Windows 资源（图标/版本信息）嵌入失败：{other}"),
         }
     }

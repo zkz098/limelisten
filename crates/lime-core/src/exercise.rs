@@ -52,7 +52,11 @@ pub struct MaterialExercise {
 }
 
 impl MaterialExercise {
-    pub fn new(material_ordinal: u32, title: impl Into<String>, questions: Vec<ExerciseQuestion>) -> Self {
+    pub fn new(
+        material_ordinal: u32,
+        title: impl Into<String>,
+        questions: Vec<ExerciseQuestion>,
+    ) -> Self {
         Self {
             material_ordinal,
             title: title.into(),

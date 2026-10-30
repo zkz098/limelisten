@@ -20,12 +20,13 @@ fn main() {
     let mono: Vec<f32> = if ch <= 1 {
         raw
     } else {
-        raw.chunks(ch).map(|c| c.iter().sum::<f32>() / ch as f32).collect()
+        raw.chunks(ch)
+            .map(|c| c.iter().sum::<f32>() / ch as f32)
+            .collect()
     };
     let env = energy_envelope(&mono, spec.sample_rate, &params);
     let mut structure = detect_structure(&env, spec.sample_rate, &params);
-    structure.has_digital_silence =
-        !digital_silence_spans(&mono, spec.sample_rate, 500).is_empty();
+    structure.has_digital_silence = !digital_silence_spans(&mono, spec.sample_rate, 500).is_empty();
     let chimes = detect_chimes(&mono, spec.sample_rate, &params.chime);
     let chapters = build_chapters(&structure, &[], &chimes, &params);
 

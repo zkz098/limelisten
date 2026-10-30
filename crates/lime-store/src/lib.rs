@@ -132,7 +132,9 @@ impl Store {
                 .map_err(|e| Error::Store(e.to_string()))?;
         }
         self.conn
-            .execute_batch("CREATE INDEX IF NOT EXISTS idx_chapter_media_seq ON chapter(media_id, seq);")
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_chapter_media_seq ON chapter(media_id, seq);",
+            )
             .map_err(|e| Error::Store(e.to_string()))?;
         Ok(())
     }
@@ -173,7 +175,9 @@ impl Store {
             )
             .map_err(|e| Error::Store(e.to_string()))?;
         self.conn
-            .query_row("SELECT id FROM media WHERE path=?1", params![path], |r| r.get(0))
+            .query_row("SELECT id FROM media WHERE path=?1", params![path], |r| {
+                r.get(0)
+            })
             .map_err(|e| Error::Store(e.to_string()))
     }
 
@@ -267,8 +271,11 @@ impl Store {
             tx.execute("DELETE FROM chapter WHERE media_id=?1", params![media_id])
                 .map_err(|e| Error::Store(e.to_string()))?;
         } else {
-            tx.execute("DELETE FROM chapter WHERE media_id=?1 AND locked=0", params![media_id])
-                .map_err(|e| Error::Store(e.to_string()))?;
+            tx.execute(
+                "DELETE FROM chapter WHERE media_id=?1 AND locked=0",
+                params![media_id],
+            )
+            .map_err(|e| Error::Store(e.to_string()))?;
         }
 
         // 仍需保留的人工修正：按 (level, 父下标, 同级序号) 认领本次分析里的同名章节
@@ -294,7 +301,9 @@ impl Store {
             let parent = c.parent.map(|p| p as i64 + 1).unwrap_or(0);
             let parent_val: Option<i64> = if parent > 0 { Some(parent) } else { None };
 
-            let claim = kept.iter().position(|k| k.1 == level && k.2 == parent && k.3 == c.ordinal as i64);
+            let claim = kept
+                .iter()
+                .position(|k| k.1 == level && k.2 == parent && k.3 == c.ordinal as i64);
             if let Some(pos) = claim {
                 let id = kept.remove(pos).0;
                 tx.execute(
@@ -366,7 +375,11 @@ impl Store {
                 Ok((
                     Chapter {
                         seq: seq.unwrap_or(0).max(0) as u32,
-                        level: if level == 0 { ChapterLevel::Material } else { ChapterLevel::Question },
+                        level: if level == 0 {
+                            ChapterLevel::Material
+                        } else {
+                            ChapterLevel::Question
+                        },
                         parent: parent.map(|p| (p - 1).max(0) as usize),
                         ordinal: r.get::<_, i64>(2)? as u32,
                         start_ms: r.get::<_, i64>(3)? as u64,
@@ -408,7 +421,10 @@ impl Store {
     }
 
     pub fn save_sentences(&self, media_id: i64, sentences: &[Sentence]) -> Result<()> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| Error::Store(e.to_string()))?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Store(e.to_string()))?;
         tx.execute("DELETE FROM sentence WHERE media_id=?1", params![media_id])
             .map_err(|e| Error::Store(e.to_string()))?;
         tx.execute("DELETE FROM word WHERE media_id=?1", params![media_id])
@@ -419,7 +435,14 @@ impl Store {
             tx.execute(
                 "INSERT INTO sentence(media_id, chapter_id, ordinal, start_ms, end_ms, text)
                  VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-                params![media_id, chapter_id, s_idx as i64, s.start_ms as i64, s.end_ms as i64, s.text],
+                params![
+                    media_id,
+                    chapter_id,
+                    s_idx as i64,
+                    s.start_ms as i64,
+                    s.end_ms as i64,
+                    s.text
+                ],
             )
             .map_err(|e| Error::Store(e.to_string()))?;
             let sent_id = tx.last_insert_rowid();
@@ -428,7 +451,14 @@ impl Store {
                 tx.execute(
                     "INSERT INTO word(sentence_id, media_id, ordinal, start_ms, end_ms, text)
                      VALUES(?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![sent_id, media_id, w_idx as i64, w.start_ms as i64, w.end_ms as i64, w.text],
+                    params![
+                        sent_id,
+                        media_id,
+                        w_idx as i64,
+                        w.start_ms as i64,
+                        w.end_ms as i64,
+                        w.text
+                    ],
                 )
                 .map_err(|e| Error::Store(e.to_string()))?;
             }
@@ -442,7 +472,10 @@ impl Store {
     /// 转写管线指纹变化时调用：旧参数（如 `-mc -1` 的重复幻觉）产生的字幕
     /// 不应再展示，等用户用新管线重新转写。
     pub fn clear_sentences(&self, media_id: i64) -> Result<()> {
-        let tx = self.conn.unchecked_transaction().map_err(|e| Error::Store(e.to_string()))?;
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Store(e.to_string()))?;
         tx.execute("DELETE FROM sentence WHERE media_id=?1", params![media_id])
             .map_err(|e| Error::Store(e.to_string()))?;
         tx.execute("DELETE FROM word WHERE media_id=?1", params![media_id])
@@ -468,7 +501,8 @@ impl Store {
             )
             .map_err(|e| Error::Store(e.to_string()))?;
 
-        let mut words_map: std::collections::HashMap<i64, Vec<Word>> = std::collections::HashMap::new();
+        let mut words_map: std::collections::HashMap<i64, Vec<Word>> =
+            std::collections::HashMap::new();
         let w_rows = w_stmt
             .query_map(params![media_id], |r| {
                 let sid: i64 = r.get(0)?;
@@ -481,10 +515,8 @@ impl Store {
             })
             .map_err(|e| Error::Store(e.to_string()))?;
 
-        for row in w_rows {
-            if let Ok((sid, w)) = row {
-                words_map.entry(sid).or_default().push(w);
-            }
+        for (sid, w) in w_rows.flatten() {
+            words_map.entry(sid).or_default().push(w);
         }
 
         let s_rows = s_stmt
@@ -505,7 +537,8 @@ impl Store {
             })
             .map_err(|e| Error::Store(e.to_string()))?;
 
-        s_rows.collect::<std::result::Result<Vec<_>, _>>()
+        s_rows
+            .collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Store(e.to_string()))
     }
 
@@ -847,7 +880,9 @@ mod tests {
 
     fn open_with_media() -> (Store, i64) {
         let s = Store::open_in_memory().unwrap();
-        let mid = s.upsert_media("test.mp3", 1000, 2000, 60_000, 44100, 2).unwrap();
+        let mid = s
+            .upsert_media("test.mp3", 1000, 2000, 60_000, 44100, 2)
+            .unwrap();
         (s, mid)
     }
 
@@ -862,18 +897,24 @@ mod tests {
         assert_eq!(loaded_ch.len(), 6);
 
         // Sentences & words
-        let sents = vec![
-            Sentence {
-                start_ms: 1000,
-                end_ms: 5000,
-                text: "Hello world".into(),
-                words: vec![
-                    Word { start_ms: 1000, end_ms: 2500, text: "Hello".into() },
-                    Word { start_ms: 2600, end_ms: 5000, text: "world".into() },
-                ],
-                chapter: Some(0),
-            },
-        ];
+        let sents = vec![Sentence {
+            start_ms: 1000,
+            end_ms: 5000,
+            text: "Hello world".into(),
+            words: vec![
+                Word {
+                    start_ms: 1000,
+                    end_ms: 2500,
+                    text: "Hello".into(),
+                },
+                Word {
+                    start_ms: 2600,
+                    end_ms: 5000,
+                    text: "world".into(),
+                },
+            ],
+            chapter: Some(0),
+        }];
         s.save_sentences(mid, &sents).unwrap();
         let loaded_s = s.load_sentences(mid).unwrap();
         assert_eq!(loaded_s.len(), 1);
@@ -892,7 +933,8 @@ mod tests {
         let (s, mid) = open_with_media();
         assert_eq!(s.load_analysis(mid).unwrap(), None);
 
-        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-old", "").unwrap();
+        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-old", "")
+            .unwrap();
         assert_eq!(
             s.load_analysis(mid).unwrap(),
             Some((
@@ -901,7 +943,8 @@ mod tests {
             ))
         );
         // 同一 media 重复保存是覆盖写
-        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-new", "").unwrap();
+        s.save_analysis(mid, "ggml-large-v3-turbo-q5_0.bin", "fp-new", "")
+            .unwrap();
         assert_eq!(s.load_analysis(mid).unwrap().unwrap().1, "fp-new");
 
         s.replace_chapters(mid, &two_materials()).unwrap();
@@ -909,7 +952,11 @@ mod tests {
             start_ms: 0,
             end_ms: 1000,
             text: "三个月之后,我会有十分钟的时间阅读一遍".into(),
-            words: vec![Word { start_ms: 0, end_ms: 1000, text: "三个月之后".into() }],
+            words: vec![Word {
+                start_ms: 0,
+                end_ms: 1000,
+                text: "三个月之后".into(),
+            }],
             chapter: Some(0),
         }];
         s.save_sentences(mid, &sents).unwrap();
@@ -956,7 +1003,7 @@ mod tests {
         .unwrap();
 
         // 老数据插入顺序 = 「材料全在前 + 全部第 1 题 + 全部第 2 题」，父下标 = 规范下标 + 1
-        let rows: [(i64, i64, Option<i64>, i64, i64, &str); 6] = [
+        let rows = [
             (0, 0, None, 0, 60_000, "材料 1（叮咚）"),
             (0, 0, None, 70_000, 130_000, "材料 2（叮咚）"),
             (1, 1, Some(1), 0, 20_000, "第 1 题"),
@@ -1072,7 +1119,9 @@ mod tests {
     #[test]
     fn test_exercise_storage() {
         let s = Store::open_in_memory().unwrap();
-        let mid = s.upsert_media("test.mp3", 1000, 1000, 60000, 44100, 2).unwrap();
+        let mid = s
+            .upsert_media("test.mp3", 1000, 1000, 60000, 44100, 2)
+            .unwrap();
 
         let exercises = vec![
             MaterialExercise::new(
@@ -1082,14 +1131,22 @@ mod tests {
                     ExerciseQuestion::new(1, "What is it?", vec!["A. One".into(), "B. Two".into()])
                         .with_answer("A")
                         .with_explanation("Detail explanation"),
-                    ExerciseQuestion::new(2, "Where is it?", vec!["A. Here".into(), "B. There".into()])
-                        .with_answer("B"),
+                    ExerciseQuestion::new(
+                        2,
+                        "Where is it?",
+                        vec!["A. Here".into(), "B. There".into()],
+                    )
+                    .with_answer("B"),
                 ],
             ),
             MaterialExercise::new(
                 2,
                 "Text 2",
-                vec![ExerciseQuestion::new(3, "When?", vec!["A. Today".into(), "B. Tomorrow".into()])],
+                vec![ExerciseQuestion::new(
+                    3,
+                    "When?",
+                    vec!["A. Today".into(), "B. Tomorrow".into()],
+                )],
             ),
         ];
 
@@ -1100,7 +1157,10 @@ mod tests {
         assert_eq!(loaded[0].title, "Text 1");
         assert_eq!(loaded[0].questions.len(), 2);
         assert_eq!(loaded[0].questions[0].answer.as_deref(), Some("A"));
-        assert_eq!(loaded[0].questions[0].explanation.as_deref(), Some("Detail explanation"));
+        assert_eq!(
+            loaded[0].questions[0].explanation.as_deref(),
+            Some("Detail explanation")
+        );
         assert_eq!(loaded[1].material_ordinal, 2);
         assert_eq!(loaded[1].questions.len(), 1);
 

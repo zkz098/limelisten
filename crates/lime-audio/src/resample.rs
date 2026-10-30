@@ -103,7 +103,10 @@ mod tests {
             }
         }
         let est = zc as f32 * dst as f32 / (2.0 * done as f32);
-        assert!((est - f0).abs() < 25.0, "resampled freq {est:.1} Hz, expect ~{f0}");
+        assert!(
+            (est - f0).abs() < 25.0,
+            "resampled freq {est:.1} Hz, expect ~{f0}"
+        );
     }
 
     /// `max_output_frames` 必须保证 `process` 不越界读取（否则流式分块会 panic）。
@@ -162,6 +165,9 @@ mod tests {
             }
         }
         let est = zc as f32 * dst as f32 / (2.0 * y.len() as f32);
-        assert!((est - f0).abs() < 25.0, "streaming freq {est:.1} Hz, expect ~{f0}");
+        assert!(
+            (est - f0).abs() < 25.0,
+            "streaming freq {est:.1} Hz, expect ~{f0}"
+        );
     }
 }

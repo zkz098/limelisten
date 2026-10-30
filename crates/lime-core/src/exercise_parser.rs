@@ -43,13 +43,17 @@ impl ExerciseParser {
         let re_stem = Regex::new(r"^(?:第\s*)?(\d+)[\.、\s\)\:\-]+\s*(.+)$").unwrap();
 
         // 答案行，例如: "答案: A", "Key: B", "[答案] C", "Answer: A"
-        let re_answer = Regex::new(r"(?i)^(?:【?答案】?|【?Keys?】?|【?Answers?】?)[:：\s]*([A-Ga-g])\b").unwrap();
+        let re_answer =
+            Regex::new(r"(?i)^(?:【?答案】?|【?Keys?】?|【?Answers?】?)[:：\s]*([A-Ga-g])\b")
+                .unwrap();
 
         // 解析行，例如: "解析: 女士提到了...", "Explanation: ..."
-        let re_expl = Regex::new(r"(?i)^(?:【?解析】?|【?Explanation】?|【?Notes?】?)[:：\s]*(.+)$").unwrap();
+        let re_expl =
+            Regex::new(r"(?i)^(?:【?解析】?|【?Explanation】?|【?Notes?】?)[:：\s]*(.+)$").unwrap();
 
         // 集中答案块特征行，例如: "【参考答案】", "Keys:"
-        let re_end_answer_block = Regex::new(r"(?i)^[【\[]?(?:参考答案|答案|Keys?|Answers?)[】\]]?$").unwrap();
+        let re_end_answer_block =
+            Regex::new(r"(?i)^[【\[]?(?:参考答案|答案|Keys?|Answers?)[】\]]?$").unwrap();
 
         // 集中答案格式：例如 "1. A  2. B" 或 "1-5 A B C D A"
         let re_item_ans = Regex::new(r"(\d+)[\.、\s\:\-]+([A-Ga-g])").unwrap();
@@ -87,29 +91,31 @@ impl ExerciseParser {
         let mut cur_q_ans: Option<String> = None;
         let mut cur_q_expl: Option<String> = None;
 
-        let flush_current_question = |cur_num: &mut Option<u32>,
-                                      cur_stem: &mut String,
-                                      cur_opts: &mut Vec<String>,
-                                      cur_ans: &mut Option<String>,
-                                      cur_expl: &mut Option<String>,
-                                      questions: &mut Vec<ExerciseQuestion>,
-                                      end_ans_map: &HashMap<u32, String>| {
-            if let Some(num) = *cur_num {
-                if !cur_stem.is_empty() {
-                    let mut q = ExerciseQuestion::new(num, cur_stem.trim(), std::mem::take(cur_opts));
-                    let final_ans = cur_ans.take().or_else(|| end_ans_map.get(&num).cloned());
-                    if let Some(a) = final_ans {
-                        q.answer = Some(a);
+        let flush_current_question =
+            |cur_num: &mut Option<u32>,
+             cur_stem: &mut String,
+             cur_opts: &mut Vec<String>,
+             cur_ans: &mut Option<String>,
+             cur_expl: &mut Option<String>,
+             questions: &mut Vec<ExerciseQuestion>,
+             end_ans_map: &HashMap<u32, String>| {
+                if let Some(num) = *cur_num {
+                    if !cur_stem.is_empty() {
+                        let mut q =
+                            ExerciseQuestion::new(num, cur_stem.trim(), std::mem::take(cur_opts));
+                        let final_ans = cur_ans.take().or_else(|| end_ans_map.get(&num).cloned());
+                        if let Some(a) = final_ans {
+                            q.answer = Some(a);
+                        }
+                        if let Some(e) = cur_expl.take() {
+                            q.explanation = Some(e.trim().to_string());
+                        }
+                        questions.push(q);
                     }
-                    if let Some(e) = cur_expl.take() {
-                        q.explanation = Some(e.trim().to_string());
-                    }
-                    questions.push(q);
                 }
-            }
-            *cur_num = None;
-            cur_stem.clear();
-        };
+                *cur_num = None;
+                cur_stem.clear();
+            };
 
         for line in &lines {
             if line.is_empty() {
@@ -239,9 +245,7 @@ impl ExerciseParser {
         groups
             .into_iter()
             .enumerate()
-            .map(|(i, (title, questions))| {
-                MaterialExercise::new(i as u32 + 1, title, questions)
-            })
+            .map(|(i, (title, questions))| MaterialExercise::new(i as u32 + 1, title, questions))
             .collect()
     }
 
@@ -269,7 +273,11 @@ impl ExerciseParser {
             if cur_chunk.is_empty() {
                 break;
             }
-            out.push(MaterialExercise::new(i as u32, format!("材料 {i}"), cur_chunk));
+            out.push(MaterialExercise::new(
+                i as u32,
+                format!("材料 {i}"),
+                cur_chunk,
+            ));
         }
 
         out

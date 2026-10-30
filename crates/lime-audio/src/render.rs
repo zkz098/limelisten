@@ -45,7 +45,11 @@ pub fn render(path: &Path, opt: &RenderOptions) -> Result<Vec<f32>> {
     let mut stretch = Stretcher::new(opt.channels, opt.target_rate);
     stretch.set_speed(opt.speed);
     let mut resampler = if src_rate != opt.target_rate {
-        Some(LinearResampler::new(src_rate, opt.target_rate, opt.channels))
+        Some(LinearResampler::new(
+            src_rate,
+            opt.target_rate,
+            opt.channels,
+        ))
     } else {
         None
     };
@@ -80,8 +84,7 @@ pub fn render(path: &Path, opt: &RenderOptions) -> Result<Vec<f32>> {
         if src_ch == opt.channels {
             norm = src_block;
         } else if src_ch == 1 {
-            for f in 0..frames {
-                let v = src_block[f];
+            for &v in src_block.iter().take(frames) {
                 for _ in 0..opt.channels {
                     norm.push(v);
                 }
@@ -150,7 +153,9 @@ impl WavStreamWriter {
     pub fn write(&mut self, samples: &[f32]) -> Result<()> {
         for s in samples {
             let v = (s.clamp(-1.0, 1.0) * 32767.0) as i16;
-            self.inner.write_sample(v).map_err(|e| Error::Io(e.to_string()))?;
+            self.inner
+                .write_sample(v)
+                .map_err(|e| Error::Io(e.to_string()))?;
         }
         Ok(())
     }
