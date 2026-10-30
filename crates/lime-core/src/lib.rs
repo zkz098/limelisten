@@ -18,7 +18,11 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub mod exercise;
+pub mod exercise_parser;
 pub mod limed;
+pub use exercise::{ExerciseQuestion, MaterialExercise};
+pub use exercise_parser::ExerciseParser;
 pub use limed::{find_accompanying_audio, find_matching_limed, LimedFile, LimedMeta};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

@@ -1,11 +1,14 @@
 //! 库与缓存：SQLite（库/进度/分析缓存/生词本）。schema 见 docs/PLAN.md §5。
 
-use lime_core::{normalize_chapters, Chapter, ChapterLevel, ChapterSource, Error, Media, Result, Sentence, Word};
+use lime_core::{
+    normalize_chapters, Chapter, ChapterLevel, ChapterSource, Error, ExerciseQuestion,
+    MaterialExercise, Media, Result, Sentence, Word,
+};
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::Path;
 
-pub const SCHEMA_VERSION: i64 = 3;
+pub const SCHEMA_VERSION: i64 = 4;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MediaItem {
@@ -86,6 +89,17 @@ impl Store {
                     id INTEGER PRIMARY KEY, word TEXT, lemma TEXT, media_id INTEGER,
                     chapter_id INTEGER, sentence_id INTEGER, start_ms INTEGER, end_ms INTEGER,
                     clip_path TEXT, note TEXT, created_at INTEGER);
+                CREATE TABLE IF NOT EXISTS exercise(
+                    id INTEGER PRIMARY KEY,
+                    media_id INTEGER REFERENCES media(id) ON DELETE CASCADE,
+                    material_ordinal INTEGER NOT NULL,
+                    material_title TEXT NOT NULL,
+                    question_num INTEGER NOT NULL,
+                    stem TEXT NOT NULL,
+                    options_json TEXT NOT NULL,
+                    answer TEXT,
+                    explanation TEXT);
+                CREATE INDEX IF NOT EXISTS idx_exercise_media ON exercise(media_id, material_ordinal);
                 "#,
             )
             .map_err(|e| Error::Store(e.to_string()))?;
@@ -493,6 +507,104 @@ impl Store {
 
         s_rows.collect::<std::result::Result<Vec<_>, _>>()
             .map_err(|e| Error::Store(e.to_string()))
+    }
+
+    pub fn save_exercises(&self, media_id: i64, exercises: &[MaterialExercise]) -> Result<()> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        tx.execute("DELETE FROM exercise WHERE media_id=?1", params![media_id])
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        for mat in exercises {
+            for q in &mat.questions {
+                let options_json = serde_json::to_string(&q.options)
+                    .map_err(|e| Error::Store(format!("serialize options: {e}")))?;
+                tx.execute(
+                    "INSERT INTO exercise(media_id, material_ordinal, material_title, question_num, stem, options_json, answer, explanation)
+                     VALUES(?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                    params![
+                        media_id,
+                        mat.material_ordinal as i64,
+                        &mat.title,
+                        q.num as i64,
+                        &q.stem,
+                        options_json,
+                        &q.answer,
+                        &q.explanation,
+                    ],
+                )
+                .map_err(|e| Error::Store(e.to_string()))?;
+            }
+        }
+
+        tx.commit().map_err(|e| Error::Store(e.to_string()))?;
+        Ok(())
+    }
+
+    pub fn load_exercises(&self, media_id: i64) -> Result<Vec<MaterialExercise>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT material_ordinal, material_title, question_num, stem, options_json, answer, explanation
+                 FROM exercise WHERE media_id=?1 ORDER BY material_ordinal, question_num",
+            )
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        struct RowItem {
+            material_ordinal: u32,
+            material_title: String,
+            question: ExerciseQuestion,
+        }
+
+        let rows = stmt
+            .query_map(params![media_id], |r| {
+                let mat_ord = r.get::<_, i64>(0)? as u32;
+                let mat_title: String = r.get(1)?;
+                let q_num = r.get::<_, i64>(2)? as u32;
+                let stem: String = r.get(3)?;
+                let opts_json: String = r.get(4)?;
+                let ans: Option<String> = r.get(5)?;
+                let expl: Option<String> = r.get(6)?;
+                let opts: Vec<String> = serde_json::from_str(&opts_json).unwrap_or_default();
+
+                let mut q = ExerciseQuestion::new(q_num, stem, opts);
+                q.answer = ans;
+                q.explanation = expl;
+                Ok(RowItem {
+                    material_ordinal: mat_ord,
+                    material_title: mat_title,
+                    question: q,
+                })
+            })
+            .map_err(|e| Error::Store(e.to_string()))?;
+
+        let mut groups: Vec<MaterialExercise> = Vec::new();
+        for item in rows {
+            let row = item.map_err(|e| Error::Store(e.to_string()))?;
+            if let Some(last) = groups.last_mut() {
+                if last.material_ordinal == row.material_ordinal {
+                    last.questions.push(row.question);
+                    continue;
+                }
+            }
+            groups.push(MaterialExercise::new(
+                row.material_ordinal,
+                row.material_title,
+                vec![row.question],
+            ));
+        }
+
+        Ok(groups)
+    }
+
+    pub fn delete_exercises(&self, media_id: i64) -> Result<()> {
+        self.conn
+            .execute("DELETE FROM exercise WHERE media_id=?1", params![media_id])
+            .map_err(|e| Error::Store(e.to_string()))?;
+        Ok(())
     }
 
     pub fn save_analysis(
@@ -955,5 +1067,44 @@ mod tests {
         // 光标不在章节范围内 → 拆分不动
         assert!(!s.split_chapter(mid, 2, 61_000).unwrap());
         assert_eq!(s.load_chapters(mid).unwrap().len(), 6);
+    }
+
+    #[test]
+    fn test_exercise_storage() {
+        let s = Store::open_in_memory().unwrap();
+        let mid = s.upsert_media("test.mp3", 1000, 1000, 60000, 44100, 2).unwrap();
+
+        let exercises = vec![
+            MaterialExercise::new(
+                1,
+                "Text 1",
+                vec![
+                    ExerciseQuestion::new(1, "What is it?", vec!["A. One".into(), "B. Two".into()])
+                        .with_answer("A")
+                        .with_explanation("Detail explanation"),
+                    ExerciseQuestion::new(2, "Where is it?", vec!["A. Here".into(), "B. There".into()])
+                        .with_answer("B"),
+                ],
+            ),
+            MaterialExercise::new(
+                2,
+                "Text 2",
+                vec![ExerciseQuestion::new(3, "When?", vec!["A. Today".into(), "B. Tomorrow".into()])],
+            ),
+        ];
+
+        s.save_exercises(mid, &exercises).unwrap();
+        let loaded = s.load_exercises(mid).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].material_ordinal, 1);
+        assert_eq!(loaded[0].title, "Text 1");
+        assert_eq!(loaded[0].questions.len(), 2);
+        assert_eq!(loaded[0].questions[0].answer.as_deref(), Some("A"));
+        assert_eq!(loaded[0].questions[0].explanation.as_deref(), Some("Detail explanation"));
+        assert_eq!(loaded[1].material_ordinal, 2);
+        assert_eq!(loaded[1].questions.len(), 1);
+
+        s.delete_exercises(mid).unwrap();
+        assert!(s.load_exercises(mid).unwrap().is_empty());
     }
 }

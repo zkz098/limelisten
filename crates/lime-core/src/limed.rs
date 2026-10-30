@@ -8,7 +8,7 @@
 //!   - 7: `0x00` (保留位)
 //! - 8..: zstd 压缩的 UTF-8 JSON 数据包（包含 LimedFile 结构体）。
 
-use crate::{Chapter, Error, Result, Sentence};
+use crate::{Chapter, Error, MaterialExercise, Result, Sentence};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -53,11 +53,23 @@ pub struct LimedFile {
     pub meta: LimedMeta,
     pub chapters: Vec<Chapter>,
     pub sentences: Vec<Sentence>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exercises: Vec<MaterialExercise>,
 }
 
 impl LimedFile {
     pub fn new(meta: LimedMeta, chapters: Vec<Chapter>, sentences: Vec<Sentence>) -> Self {
-        Self { meta, chapters, sentences }
+        Self {
+            meta,
+            chapters,
+            sentences,
+            exercises: Vec::new(),
+        }
+    }
+
+    pub fn with_exercises(mut self, exercises: Vec<MaterialExercise>) -> Self {
+        self.exercises = exercises;
+        self
     }
 
     /// 编码为带 8 字节魔数头与 zstd 压缩的二进制格式。
@@ -343,5 +355,45 @@ mod tests {
         assert_eq!(decoded.meta.asr_fp, "");
         assert_eq!(decoded.chapters.len(), 2);
         assert_eq!(decoded.sentences.len(), 1);
+    }
+
+    #[test]
+    fn test_limed_with_exercises_roundtrip() {
+        use crate::{ExerciseQuestion, MaterialExercise};
+        let sample = make_sample_limed().with_exercises(vec![
+            MaterialExercise::new(
+                1,
+                "Text 1",
+                vec![
+                    ExerciseQuestion::new(1, "What is it?", vec!["A. Cat".into(), "B. Dog".into()])
+                        .with_answer("A")
+                        .with_explanation("It purrs."),
+                ],
+            ),
+        ]);
+
+        let encoded = sample.encode().unwrap();
+        let decoded = LimedFile::decode(&encoded).unwrap();
+        assert_eq!(decoded.exercises.len(), 1);
+        assert_eq!(decoded.exercises[0].material_ordinal, 1);
+        assert_eq!(decoded.exercises[0].questions[0].num, 1);
+        assert_eq!(decoded.exercises[0].questions[0].answer.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_legacy_limed_without_exercises_loads_empty() {
+        let json = r#"{
+            "meta": {
+                "audio_filename": "test.mp3",
+                "duration_ms": 1000,
+                "sample_rate": 44100,
+                "channels": 2
+            },
+            "chapters": [],
+            "sentences": []
+        }"#;
+
+        let decoded: LimedFile = serde_json::from_str(json).unwrap();
+        assert!(decoded.exercises.is_empty(), "老版本缺省 exercises 时必须默认为空 Vec");
     }
 }

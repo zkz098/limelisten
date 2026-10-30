@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, Button, Slider, ScrollView } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, Slider, ScrollView, TextEdit } from "std-widgets.slint";
 import "./assets/remixicon.ttf";
 
 global Ri {
@@ -38,6 +38,8 @@ global Ri {
     out property <string> info: "\u{ee59}";
     out property <string> github: "\u{edca}";
     out property <string> external-link: "\u{ecaf}";
+    out property <string> question-line: "\u{f035}";
+    out property <string> survey: "\u{f1c4}";
 }
 
 component RiButton inherits Rectangle {
@@ -197,6 +199,409 @@ export struct ModelBenchmarkRow {
     is-recommended: bool,
 }
 
+export struct QuestionOptionItem {
+    key: string,
+    text: string,
+}
+
+export struct ExerciseQuestionRow {
+    num: int,
+    stem: string,
+    options: [QuestionOptionItem],
+    selected-opt: string,
+    correct-answer: string,
+    explanation: string,
+    is-current: bool,
+}
+
+component ExerciseView inherits Rectangle {
+    in property <[ExerciseQuestionRow]> questions: [];
+    in property <string> material-title: "";
+    in property <bool> submitted: false;
+    in property <bool> has-exercises: false;
+    callback select-option(int, string);
+    callback toggle-submitted();
+    callback reset-exam();
+    callback seek-question(int);
+    callback open-import();
+
+    background: white;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: #e2e8f0;
+
+    VerticalLayout {
+        padding: 16px;
+        spacing: 12px;
+
+        // 顶部控制行
+        HorizontalLayout {
+            height: 32px;
+            spacing: 10px;
+            alignment: center;
+
+            RiIcon {
+                icon: Ri.survey;
+                icon-size: 16px;
+                icon-color: #3b82f6;
+            }
+
+            Text {
+                text: root.material-title != "" ? root.material-title : "听力试题";
+                font-size: 14px;
+                font-weight: 700;
+                color: #0f172a;
+                vertical-alignment: center;
+            }
+
+            if root.questions.length > 0 : Text {
+                text: "（共 " + root.questions.length + " 题）";
+                font-size: 12px;
+                color: #64748b;
+                vertical-alignment: center;
+            }
+
+            Rectangle { horizontal-stretch: 1; }
+
+            if root.questions.length > 0 : RiButton {
+                text: root.submitted ? "重新作答" : "交卷 / 核对答案";
+                primary: !root.submitted;
+                btn-height: 28px;
+                clicked => { root.toggle-submitted(); }
+            }
+
+            RiButton {
+                icon: Ri.survey;
+                text: "导入 / 修改试题";
+                btn-height: 28px;
+                clicked => { root.open-import(); }
+            }
+        }
+
+        Rectangle { height: 1px; background: #f1f5f9; }
+
+        // 空状态
+        if root.questions.length == 0 : Rectangle {
+            vertical-stretch: 1;
+            background: #f8fafc;
+            border-radius: 6px;
+            border-width: 1px;
+            border-color: #f1f5f9;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 12px;
+
+                RiIcon {
+                    icon: Ri.survey;
+                    icon-size: 48px;
+                    icon-color: #cbd5e1;
+                }
+
+                Text {
+                    text: root.has-exercises ? "当前材料暂无对应的试题" : "当前音频尚未导入题目";
+                    color: #475569;
+                    font-size: 14px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+
+                Text {
+                    text: root.has-exercises ? "随着播放切换到下一材料，试题将自动呈现" : "导入后将根据听力材料自动联动呈现试题，支持自测交卷与即时解析";
+                    color: #94a3b8;
+                    font-size: 12px;
+                    horizontal-alignment: center;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    RiButton {
+                        icon: Ri.survey;
+                        text: "立即导入题目";
+                        primary: true;
+                        clicked => { root.open-import(); }
+                    }
+                }
+            }
+        }
+
+        // 题目列表
+        if root.questions.length > 0 : ScrollView {
+            vertical-stretch: 1;
+            VerticalLayout {
+                alignment: start;
+                spacing: 14px;
+
+                for q in root.questions : Rectangle {
+                    background: q.is-current ? #f0f7ff : #ffffff;
+                    border-radius: 8px;
+                    border-width: q.is-current ? 2px : 1px;
+                    border-color: q.is-current ? #3b82f6 : #e2e8f0;
+                    animate border-color, background { duration: 150ms; easing: ease-out; }
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 10px;
+
+                        // 题号 + 试听按钮 + 正在播放状态
+                        HorizontalLayout {
+                            spacing: 8px;
+                            alignment: center;
+
+                            Text {
+                                text: "第 " + q.num + " 题";
+                                font-size: 13px;
+                                font-weight: 700;
+                                color: q.is-current ? #1d4ed8 : #0f172a;
+                                vertical-alignment: center;
+                            }
+
+                            if q.is-current : Rectangle {
+                                height: 20px;
+                                border-radius: 10px;
+                                background: #dbeafe;
+                                HorizontalLayout {
+                                    padding-left: 8px;
+                                    padding-right: 8px;
+                                    alignment: center;
+                                    Text {
+                                        text: "正在播放";
+                                        font-size: 10px;
+                                        font-weight: 700;
+                                        color: #1d4ed8;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                            }
+
+                            Rectangle { horizontal-stretch: 1; }
+
+                            RiButton {
+                                icon: Ri.headphone;
+                                text: "试听本题";
+                                btn-height: 24px;
+                                clicked => { root.seek-question(q.num); }
+                            }
+                        }
+
+                        // 题干
+                        Text {
+                            text: q.stem;
+                            font-size: 14px;
+                            color: #1e293b;
+                            font-weight: 500;
+                            wrap: word-wrap;
+                        }
+
+                        // 选项列表
+                        VerticalLayout {
+                            spacing: 6px;
+
+                            for opt in q.options : Rectangle {
+                                height: 34px;
+                                border-radius: 6px;
+                                border-width: 1px;
+                                background: !root.submitted ?
+                                    (opt.key == q.selected-opt ? #eff6ff : (opt-touch.has-hover ? #f8fafc : #ffffff)) :
+                                    (opt.key == q.correct-answer ? #dcfce7 : (opt.key == q.selected-opt ? #fee2e2 : #f8fafc));
+                                border-color: !root.submitted ?
+                                    (opt.key == q.selected-opt ? #3b82f6 : (opt-touch.has-hover ? #cbd5e1 : #e2e8f0)) :
+                                    (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #e2e8f0));
+
+                                animate background, border-color { duration: 120ms; easing: ease-out; }
+
+                                HorizontalLayout {
+                                    padding-left: 12px;
+                                    padding-right: 12px;
+                                    spacing: 8px;
+                                    alignment: center;
+
+                                    // 单选圆圈
+                                    Rectangle {
+                                        width: 16px;
+                                        height: 16px;
+                                        border-radius: 8px;
+                                        border-width: 1.5px;
+                                        border-color: !root.submitted ?
+                                            (opt.key == q.selected-opt ? #3b82f6 : #94a3b8) :
+                                            (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #cbd5e1));
+                                        background: white;
+
+                                        if opt.key == q.selected-opt || (root.submitted && opt.key == q.correct-answer) : Rectangle {
+                                            width: 8px;
+                                            height: 8px;
+                                            border-radius: 4px;
+                                            background: !root.submitted ? #3b82f6 : (opt.key == q.correct-answer ? #22c55e : #ef4444);
+                                            x: (parent.width - self.width) / 2;
+                                            y: (parent.height - self.height) / 2;
+                                        }
+                                    }
+
+                                    // 选项文本
+                                    Text {
+                                        horizontal-stretch: 1;
+                                        text: opt.text;
+                                        font-size: 13px;
+                                        color: !root.submitted ?
+                                            (opt.key == q.selected-opt ? #1d4ed8 : #1e293b) :
+                                            (opt.key == q.correct-answer ? #15803d : (opt.key == q.selected-opt ? #b91c1c : #64748b));
+                                        font-weight: (opt.key == q.selected-opt || (root.submitted && opt.key == q.correct-answer)) ? 600 : 400;
+                                        vertical-alignment: center;
+                                        overflow: elide;
+                                    }
+
+                                    // 提交后的答案提示标签
+                                    if root.submitted && opt.key == q.correct-answer : Text {
+                                        text: "正确答案";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: #15803d;
+                                        vertical-alignment: center;
+                                    }
+
+                                    if root.submitted && opt.key == q.selected-opt && opt.key != q.correct-answer : Text {
+                                        text: "您的选择";
+                                        font-size: 11px;
+                                        font-weight: 700;
+                                        color: #b91c1c;
+                                        vertical-alignment: center;
+                                    }
+                                }
+
+                                opt-touch := TouchArea {
+                                    enabled: !root.submitted;
+                                    mouse-cursor: !root.submitted ? pointer : default;
+                                    clicked => { root.select-option(q.num, opt.key); }
+                                }
+                            }
+                        }
+
+                        // 解析展示卡片（交卷后显示）
+                        if root.submitted && q.explanation != "" : Rectangle {
+                            background: #fefce8;
+                            border-radius: 6px;
+                            border-width: 1px;
+                            border-color: #fef08a;
+
+                            HorizontalLayout {
+                                padding: 10px;
+                                spacing: 8px;
+
+                                RiIcon {
+                                    icon: Ri.info;
+                                    icon-size: 14px;
+                                    icon-color: #ca8a04;
+                                }
+
+                                Text {
+                                    horizontal-stretch: 1;
+                                    text: "解析：" + q.explanation;
+                                    font-size: 12px;
+                                    color: #854d0e;
+                                    wrap: word-wrap;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+component SubtitleStage inherits Rectangle {
+    in property <[[WordCell]]> lines: [];
+    in property <int> active-word: -1;
+    in property <bool> show-transcript: true;
+    callback click-word(int);
+    callback toggle-transcript();
+
+    background: white;
+    border-radius: 8px;
+    border-width: 1px;
+    border-color: #e2e8f0;
+
+    VerticalLayout {
+        padding: 20px;
+        spacing: 12px;
+
+        if root.show-transcript : ScrollView {
+            VerticalLayout {
+                alignment: start;
+                spacing: 10px;
+                for line in root.lines : HorizontalLayout {
+                    alignment: start;
+                    spacing: 6px;
+                    for w in line : Rectangle {
+                        background: w.idx == root.active-word ? #fef3c7 : (word-touch.has-hover ? #f1f5f9 : transparent);
+                        border-color: w.idx == root.active-word ? #f59e0b : (word-touch.has-hover ? #cbd5e1 : transparent);
+                        border-width: 1px;
+                        border-radius: 6px;
+                        animate background, border-color { duration: 120ms; easing: ease-out; }
+
+                        HorizontalLayout {
+                            padding-left: 8px;
+                            padding-right: 8px;
+                            padding-top: 4px;
+                            padding-bottom: 4px;
+                            alignment: center;
+
+                            Text {
+                                text: w.text;
+                                color: w.idx == root.active-word ? #92400e : (word-touch.has-hover ? #0f172a : #1e293b);
+                                font-size: 20px;
+                                font-weight: w.idx == root.active-word ? 700 : 400;
+                                vertical-alignment: center;
+                                animate color { duration: 120ms; easing: ease-out; }
+                            }
+                        }
+                        word-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.click-word(w.idx); }
+                        }
+                    }
+                }
+            }
+        }
+
+        if !root.show-transcript : Rectangle {
+            vertical-stretch: 1;
+            background: #f8fafc;
+            border-radius: 8px;
+            border-width: 1px;
+            border-color: #e2e8f0;
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 10px;
+
+                RiIcon {
+                    icon: Ri.eye-off;
+                    icon-size: 40px;
+                    icon-color: #cbd5e1;
+                }
+
+                Text {
+                    text: "原文已隐藏";
+                    color: #334155;
+                    font-size: 16px;
+                    font-weight: 600;
+                    horizontal-alignment: center;
+                }
+
+                HorizontalLayout {
+                    alignment: center;
+                    RiButton {
+                        icon: Ri.eye;
+                        text: "显示原文";
+                        clicked => { root.toggle-transcript(); }
+                    }
+                }
+            }
+        }
+    }
+}
+
 export component MainWindow inherits Window {
     in-out property <string> app-title: "limelisten — 听力播放器";
     title: root.app-title;
@@ -253,6 +658,16 @@ export component MainWindow inherits Window {
     in-out property <string> github-url: "https://github.com/zkz098/limelisten";
     in-out property <string> license-name: "GPL-3.0-or-later";
 
+    // ---- 听力试题状态与模态框 ----
+    in-out property <int> main-tab: 0; // 0 = 逐词字幕, 1 = 听力试题, 2 = 题文对照
+    in-out property <[ExerciseQuestionRow]> current-exercises: [];
+    in-out property <string> current-exercise-material-title: "当前材料试题";
+    in-out property <bool> has-exercises: false;
+    in-out property <bool> exercise-submitted: false; // 自测交卷模式：true 表示已查看答案与解析
+    in-out property <bool> show-exercise-modal: false;
+    in-out property <string> exercise-import-text: "";
+    in-out property <string> exercise-import-error: "";
+
     // ---- 回调命令 ----
     callback open-file();
     callback open-folder();
@@ -273,6 +688,16 @@ export component MainWindow inherits Window {
     callback export-subtitles(string); // "srt", "lrc", "txt"
     callback click-word(int);
     callback toggle-transcript(); // 隐藏 / 显示听力原文
+
+    // 试题相关回调
+    callback switch-main-tab(int);
+    callback open-exercise-modal();
+    callback close-exercise-modal();
+    callback submit-exercise-import(string);
+    callback select-question-option(int, string);
+    callback toggle-exercise-submitted();
+    callback reset-exercise-exam();
+    callback seek-to-question(int);
 
     // 测速与模型命令
     callback open-bench-modal();
@@ -379,13 +804,19 @@ export component MainWindow inherits Window {
                     clicked => { root.transcribe(); }
                 }
 
+                RiButton {
+                    icon: Ri.survey;
+                    text: root.has-exercises ? "题目 (已导入)" : "导入题目…";
+                    clicked => { root.open-exercise-modal(); }
+                }
+
                 // 导出字幕与缓存菜单
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
 
                 RiButton {
                     icon: Ri.file-sub;
                     text: "保存 .limed";
-                    enabled: root.has-chapters || root.has-subtitles;
+                    enabled: root.has-chapters || root.has-subtitles || root.has-exercises;
                     clicked => { root.save-limed(); }
                 }
 
@@ -807,7 +1238,7 @@ export component MainWindow inherits Window {
                 spacing: 12px;
                 vertical-stretch: 1;
 
-                // 卡拉OK 逐词字幕展示区
+                // 主区域展示卡片
                 Rectangle {
                     vertical-stretch: 1;
                     background: white;
@@ -816,13 +1247,15 @@ export component MainWindow inherits Window {
                     border-color: #e2e8f0;
 
                     VerticalLayout {
-                        padding: 20px;
+                        padding: 16px;
                         spacing: 12px;
 
-                        // 当前曲目标题与提示
+                        // 当前曲目标题与模式切换胶囊
                         HorizontalLayout {
-                            height: 24px;
+                            height: 28px;
                             spacing: 8px;
+                            alignment: center;
+
                             if !root.playing : RiIcon {
                                 icon: Ri.music;
                                 icon-size: 15px;
@@ -841,15 +1274,111 @@ export component MainWindow inherits Window {
                                 overflow: elide;
                                 animate color { duration: 150ms; easing: ease-out; }
                             }
-                            if !root.show-transcript : Text {
+
+                            // 视图模式切换胶囊
+                            Rectangle {
+                                height: 26px;
+                                background: #f1f5f9;
+                                border-radius: 6px;
+
+                                HorizontalLayout {
+                                    padding: 2px;
+                                    spacing: 2px;
+
+                                    // 逐词字幕
+                                    Rectangle {
+                                        border-radius: 4px;
+                                        background: root.main-tab == 0 ? #ffffff : transparent;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+                                            spacing: 4px;
+                                            RiIcon {
+                                                icon: Ri.captions;
+                                                icon-size: 12px;
+                                                icon-color: root.main-tab == 0 ? #1d4ed8 : #64748b;
+                                            }
+                                            Text {
+                                                text: "逐词字幕";
+                                                font-size: 11px;
+                                                font-weight: root.main-tab == 0 ? 700 : 500;
+                                                color: root.main-tab == 0 ? #1d4ed8 : #64748b;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.main-tab = 0; }
+                                        }
+                                    }
+
+                                    // 听力试题
+                                    Rectangle {
+                                        border-radius: 4px;
+                                        background: root.main-tab == 1 ? #ffffff : transparent;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+                                            spacing: 4px;
+                                            RiIcon {
+                                                icon: Ri.survey;
+                                                icon-size: 12px;
+                                                icon-color: root.main-tab == 1 ? #1d4ed8 : #64748b;
+                                            }
+                                            Text {
+                                                text: root.has-exercises ? "听力试题" : "试题 (未导入)";
+                                                font-size: 11px;
+                                                font-weight: root.main-tab == 1 ? 700 : 500;
+                                                color: root.main-tab == 1 ? #1d4ed8 : #64748b;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.main-tab = 1; }
+                                        }
+                                    }
+
+                                    // 题文对照
+                                    Rectangle {
+                                        border-radius: 4px;
+                                        background: root.main-tab == 2 ? #ffffff : transparent;
+                                        HorizontalLayout {
+                                            padding-left: 8px;
+                                            padding-right: 8px;
+                                            alignment: center;
+                                            spacing: 4px;
+                                            RiIcon {
+                                                icon: Ri.tab-chapter;
+                                                icon-size: 12px;
+                                                icon-color: root.main-tab == 2 ? #1d4ed8 : #64748b;
+                                            }
+                                            Text {
+                                                text: "题文对照";
+                                                font-size: 11px;
+                                                font-weight: root.main-tab == 2 ? 700 : 500;
+                                                color: root.main-tab == 2 ? #1d4ed8 : #64748b;
+                                                vertical-alignment: center;
+                                            }
+                                        }
+                                        TouchArea {
+                                            mouse-cursor: pointer;
+                                            clicked => { root.main-tab = 2; }
+                                        }
+                                    }
+                                }
+                            }
+
+                            if !root.show-transcript && root.main-tab != 1 : Text {
                                 text: "原文已隐藏";
                                 color: #b45309;
                                 font-size: 12px;
                                 vertical-alignment: center;
                             }
 
-                            // 隐藏 / 显示听力原文：练习时先自己听，需要对照再点开
-                            RiButton {
+                            if root.main-tab != 1 : RiButton {
                                 icon: root.show-transcript ? Ri.eye-off : Ri.eye;
                                 icon-size: 14px;
                                 text: root.show-transcript ? "隐藏原文" : "显示原文";
@@ -860,79 +1389,55 @@ export component MainWindow inherits Window {
 
                         Rectangle { height: 1px; background: #f1f5f9; }
 
-                        // 逐词高亮主舞台（隐藏原文时换成占位卡片，一个字都不露）
-                        if root.show-transcript : ScrollView {
-                            VerticalLayout {
-                                alignment: start;
-                                spacing: 10px;
-                                for line in root.lines : HorizontalLayout {
-                                    alignment: start;
-                                    spacing: 6px;
-                                    for w in line : Rectangle {
-                                        background: w.idx == root.active-word ? #fef3c7 : (word-touch.has-hover ? #f1f5f9 : transparent);
-                                        border-color: w.idx == root.active-word ? #f59e0b : (word-touch.has-hover ? #cbd5e1 : transparent);
-                                        border-width: 1px;
-                                        border-radius: 6px;
-                                        animate background, border-color { duration: 120ms; easing: ease-out; }
-
-                                        HorizontalLayout {
-                                            padding-left: 8px;
-                                            padding-right: 8px;
-                                            padding-top: 4px;
-                                            padding-bottom: 4px;
-                                            alignment: center;
-
-                                            Text {
-                                                text: w.text;
-                                                color: w.idx == root.active-word ? #92400e : (word-touch.has-hover ? #0f172a : #1e293b);
-                                                font-size: 20px;
-                                                font-weight: w.idx == root.active-word ? 700 : 400;
-                                                vertical-alignment: center;
-                                                animate color { duration: 120ms; easing: ease-out; }
-                                            }
-                                        }
-                                        word-touch := TouchArea {
-                                            mouse-cursor: pointer;
-                                            clicked => { root.click-word(w.idx); }
-                                        }
-                                    }
-                                }
-                            }
+                        // 模式 0: 单独卡拉OK逐词字幕舞台
+                        if root.main-tab == 0 : SubtitleStage {
+                            vertical-stretch: 1;
+                            lines: root.lines;
+                            active-word: root.active-word;
+                            show-transcript: root.show-transcript;
+                            click-word(idx) => { root.click-word(idx); }
+                            toggle-transcript() => { root.toggle-transcript(); }
                         }
 
-                        if !root.show-transcript : Rectangle {
+                        // 模式 1: 单独听力试题做题卡片
+                        if root.main-tab == 1 : ExerciseView {
                             vertical-stretch: 1;
-                            background: #f8fafc;
-                            border-radius: 8px;
-                            border-width: 1px;
-                            border-color: #e2e8f0;
+                            questions: root.current-exercises;
+                            material-title: root.current-exercise-material-title;
+                            submitted: root.exercise-submitted;
+                            has-exercises: root.has-exercises;
+                            select-option(num, opt) => { root.select-question-option(num, opt); }
+                            toggle-submitted() => { root.toggle-exercise-submitted(); }
+                            reset-exam() => { root.reset-exercise-exam(); }
+                            seek-question(num) => { root.seek-to-question(num); }
+                            open-import() => { root.open-exercise-modal(); }
+                        }
 
-                            VerticalLayout {
-                                alignment: center;
-                                spacing: 10px;
+                        // 模式 2: 双栏题文对照
+                        if root.main-tab == 2 : HorizontalLayout {
+                            vertical-stretch: 1;
+                            spacing: 12px;
 
-                                RiIcon {
-                                    icon: Ri.eye-off;
-                                    icon-size: 40px;
-                                    icon-color: #cbd5e1;
-                                }
+                            ExerciseView {
+                                horizontal-stretch: 1;
+                                questions: root.current-exercises;
+                                material-title: root.current-exercise-material-title;
+                                submitted: root.exercise-submitted;
+                                has-exercises: root.has-exercises;
+                                select-option(num, opt) => { root.select-question-option(num, opt); }
+                                toggle-submitted() => { root.toggle-exercise-submitted(); }
+                                reset-exam() => { root.reset-exercise-exam(); }
+                                seek-question(num) => { root.seek-to-question(num); }
+                                open-import() => { root.open-exercise-modal(); }
+                            }
 
-                                Text {
-                                    text: "原文已隐藏";
-                                    color: #334155;
-                                    font-size: 16px;
-                                    font-weight: 600;
-                                    horizontal-alignment: center;
-                                }
-
-                                HorizontalLayout {
-                                    alignment: center;
-                                    RiButton {
-                                        icon: Ri.eye;
-                                        text: "显示原文";
-                                        clicked => { root.toggle-transcript(); }
-                                    }
-                                }
+                            SubtitleStage {
+                                horizontal-stretch: 1;
+                                lines: root.lines;
+                                active-word: root.active-word;
+                                show-transcript: root.show-transcript;
+                                click-word(idx) => { root.click-word(idx); }
+                                toggle-transcript() => { root.toggle-transcript(); }
                             }
                         }
 
@@ -1718,6 +2223,131 @@ export component MainWindow inherits Window {
                         text: "确定";
                         btn-height: 32px;
                         clicked => { root.close-about-modal(); }
+                    }
+                }
+            }
+        }
+    }
+
+    // ================= 试题导入模态框 =================
+    if root.show-exercise-modal || self.opacity > 0.01 : Rectangle {
+        x: 0px;
+        y: 0px;
+        width: 100%;
+        height: 100%;
+        visible: root.show-exercise-modal || self.opacity > 0.01;
+        opacity: root.show-exercise-modal ? 1.0 : 0.0;
+        background: #0f172a66;
+        animate opacity { duration: 180ms; easing: ease-out; }
+
+        TouchArea {
+            enabled: root.show-exercise-modal;
+            clicked => { root.close-exercise-modal(); }
+        }
+
+        Rectangle {
+            width: 680px;
+            height: exercise-modal-content.preferred-height;
+            x: (parent.width - self.width) / 2;
+            y: max(0px, (parent.height - self.height) / 2) + (root.show-exercise-modal ? 0px : 16px);
+            animate y { duration: 200ms; easing: ease-out; }
+            background: #ffffff;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #cbd5e1;
+            clip: true;
+
+            TouchArea {
+                enabled: root.show-exercise-modal;
+                // 拦截内部穿透点击
+            }
+
+            exercise-modal-content := VerticalLayout {
+                padding: 22px;
+                spacing: 14px;
+
+                // 标题栏与关闭
+                HorizontalLayout {
+                    alignment: center;
+                    spacing: 8px;
+
+                    RiIcon {
+                        icon: Ri.survey;
+                        icon-size: 18px;
+                        icon-color: #3b82f6;
+                    }
+
+                    Text {
+                        text: "导入听力试题";
+                        font-size: 16px;
+                        font-weight: 700;
+                        color: #0f172a;
+                    }
+
+                    Rectangle { horizontal-stretch: 1; }
+
+                    Rectangle {
+                        width: 28px;
+                        height: 28px;
+                        border-radius: 14px;
+                        background: close-ex-touch.has-hover ? #f1f5f9 : transparent;
+                        RiIcon {
+                            icon: Ri.close;
+                            icon-size: 16px;
+                            icon-color: close-ex-touch.has-hover ? #0f172a : #64748b;
+                        }
+                        close-ex-touch := TouchArea {
+                            mouse-cursor: pointer;
+                            clicked => { root.close-exercise-modal(); }
+                        }
+                    }
+                }
+
+                // 说明提示
+                Text {
+                    text: "直接将听力试题粘贴至下方（支持从 Word、PDF 或网页复制）。系统将自动识别材料分组（如 Text 1/Passage 1）、题号、选项（A/B/C/D）与答案解析。也可以直接粘贴 JSON 格式。";
+                    font-size: 12px;
+                    color: #64748b;
+                    wrap: word-wrap;
+                }
+
+                // 多行输入框
+                Rectangle {
+                    height: 240px;
+                    background: #f8fafc;
+                    border-radius: 6px;
+                    border-width: 1px;
+                    border-color: #cbd5e1;
+
+                    TextEdit {
+                        text <=> root.exercise-import-text;
+                        font-size: 13px;
+                    }
+                }
+
+                if root.exercise-import-error != "" : Text {
+                    text: root.exercise-import-error;
+                    color: #dc2626;
+                    font-size: 12px;
+                    font-weight: 600;
+                }
+
+                // 底部操作按钮
+                HorizontalLayout {
+                    spacing: 10px;
+                    alignment: end;
+
+                    RiButton {
+                        text: "取消";
+                        clicked => { root.close-exercise-modal(); }
+                    }
+
+                    RiButton {
+                        icon: Ri.check;
+                        text: "解析并导入试题";
+                        primary: true;
+                        enabled: root.exercise-import-text != "";
+                        clicked => { root.submit-exercise-import(root.exercise-import-text); }
                     }
                 }
             }

@@ -11,12 +11,15 @@ use crate::cli::{
     analyze_and_export_wav, assign_sentences_to_chapters, transcribe, AnalysisCore,
 };
 use crate::paths;
-use crate::{ChapterRow, MainWindow, MediaRow, ModelBenchmarkRow, WhisperBuildRow, WordCell};
+use crate::{
+    ChapterRow, ExerciseQuestionRow, MainWindow, MediaRow, ModelBenchmarkRow, QuestionOptionItem,
+    WhisperBuildRow, WordCell,
+};
 use crossbeam_channel::{unbounded, Receiver, Sender};
 use lime_audio::Engine;
 use lime_core::{
     find_accompanying_audio, find_matching_limed, normalize_chapters, Chapter, ChapterSource,
-    LimedFile, LimedMeta, Sentence, Word,
+    ExerciseParser, LimedFile, LimedMeta, MaterialExercise, Sentence, Word,
 };
 use lime_store::{MediaItem, Store};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -94,6 +97,16 @@ struct GuiState {
     is_downloading: Arc<AtomicBool>,
     is_downloading_cli: Arc<AtomicBool>,
     is_benchmarking: Arc<AtomicBool>,
+    /// 当前媒体的题目列表
+    exercises: Vec<MaterialExercise>,
+    /// 用户作答（题号 -> 选项 key，如 "A"）
+    user_answers: HashMap<u32, String>,
+    /// 自测交卷状态：true 表示已查看答案与解析
+    exercise_submitted: bool,
+    /// 当前播放处于的材料序号（1-based）
+    active_material_ordinal: u32,
+    /// 当前播放处于的小题题号
+    active_question_num: Option<u32>,
 }
 
 impl Default for GuiState {
@@ -119,6 +132,11 @@ impl Default for GuiState {
             is_downloading: Arc::new(AtomicBool::new(false)),
             is_downloading_cli: Arc::new(AtomicBool::new(false)),
             is_benchmarking: Arc::new(AtomicBool::new(false)),
+            exercises: Vec::new(),
+            user_answers: HashMap::new(),
+            exercise_submitted: false,
+            active_material_ordinal: 1,
+            active_question_num: None,
         }
     }
 }
@@ -899,7 +917,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_save_limed(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let (path, info, chapters, sentences) = {
+            let (path, info, chapters, sentences, exercises) = {
                 let st = state.borrow();
                 let Some(path) = st.path.clone() else {
                     ui.set_status("未打开音频".into());
@@ -909,9 +927,15 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     ui.set_status("无可保存数据".into());
                     return;
                 };
-                (path, core.info, core.chapters.clone(), st.sentences.clone())
+                (
+                    path,
+                    core.info,
+                    core.chapters.clone(),
+                    st.sentences.clone(),
+                    st.exercises.clone(),
+                )
             };
-            if chapters.is_empty() && sentences.is_empty() {
+            if chapters.is_empty() && sentences.is_empty() && exercises.is_empty() {
                 ui.set_status("无可保存数据".into());
                 return;
             }
@@ -933,7 +957,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 // 解码参数指纹：未来再改 whisper 参数时，旧 .limed 的字幕会自动失效
                 asr_fp: crate::cli::asr_params_fingerprint().unwrap_or_default(),
             };
-            let limed = LimedFile::new(meta, chapters, sentences);
+            let limed = LimedFile::new(meta, chapters, sentences).with_exercises(exercises);
             let target = path.with_extension("limed");
             match limed.save(&target) {
                 Ok(()) => {
@@ -1525,6 +1549,167 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         });
     }
 
+    // ---------------- 听力试题命令 ----------------
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_open_exercise_modal(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_exercise_import_error("".into());
+            ui.set_show_exercise_modal(true);
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_close_exercise_modal(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_show_exercise_modal(false);
+            ui.set_exercise_import_error("".into());
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let store = store.clone();
+        ui.on_submit_exercise_import(move |text_slint| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let text = text_slint.to_string();
+            if text.trim().is_empty() {
+                ui.set_exercise_import_error("请输入或粘贴试题内容".into());
+                return;
+            }
+
+            let (media_id, material_count) = {
+                let st = state.borrow();
+                let mat_count = st
+                    .core
+                    .as_ref()
+                    .map(|c| {
+                        c.chapters
+                            .iter()
+                            .filter(|ch| ch.is_material() && ch.title != lime_core::INTRO_TITLE)
+                            .count()
+                    })
+                    .unwrap_or(1);
+                (st.media_id, mat_count)
+            };
+
+            let parsed = ExerciseParser::parse(&text, material_count);
+            if parsed.is_empty() {
+                ui.set_exercise_import_error(
+                    "未能识别出试题，请确保包含题号（如 1.）和选项（如 A. B.）".into(),
+                );
+                return;
+            }
+
+            let total_q: usize = parsed.iter().map(|m| m.questions.len()).sum();
+            {
+                let mut st = state.borrow_mut();
+                if let Some(mid) = media_id {
+                    let _ = store.borrow().save_exercises(mid, &parsed);
+                }
+                st.exercises = parsed;
+                st.user_answers.clear();
+                st.exercise_submitted = false;
+                refresh_exercise_ui(&ui, &st);
+            }
+
+            ui.set_show_exercise_modal(false);
+            ui.set_exercise_import_error("".into());
+            ui.set_exercise_import_text("".into());
+            ui.set_main_tab(1);
+            ui.set_status(format!("成功导入试题：共 {total_q} 题").into());
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_select_question_option(move |num, opt_key_slint| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let opt_key = opt_key_slint.to_string();
+            let mut st = state.borrow_mut();
+            if !st.exercise_submitted {
+                st.user_answers.insert(num as u32, opt_key);
+                refresh_exercise_ui(&ui, &st);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_toggle_exercise_submitted(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut st = state.borrow_mut();
+            st.exercise_submitted = !st.exercise_submitted;
+            refresh_exercise_ui(&ui, &st);
+            if st.exercise_submitted {
+                ui.set_status("已交卷：正在核对答案与解析".into());
+            } else {
+                ui.set_status("重新作答模式".into());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_reset_exercise_exam(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut st = state.borrow_mut();
+            st.user_answers.clear();
+            st.exercise_submitted = false;
+            refresh_exercise_ui(&ui, &st);
+            ui.set_status("已清空作答记录".into());
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_seek_to_question(move |num| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let target_ms = {
+                let st = state.borrow();
+                let Some(core) = st.core.as_ref() else { return };
+                let q_str = format!("第 {num} 题");
+                let ch = core.chapters.iter().find(|c| {
+                    (c.title.contains(&q_str) || c.ordinal == num as u32) && !c.is_material()
+                });
+                if let Some(c) = ch {
+                    Some(c.start_ms)
+                } else {
+                    let cur_mat_ord = st.active_material_ordinal;
+                    core.chapters
+                        .iter()
+                        .find(|c| c.is_material() && c.ordinal == cur_mat_ord)
+                        .map(|c| c.start_ms)
+                }
+            };
+
+            if let Some(ms) = target_ms {
+                let st = state.borrow();
+                if let Some(eng) = st.engine.as_ref() {
+                    eng.seek_ms(ms);
+                    eng.play();
+                    ui.set_position(ms as f32);
+                    ui.set_playing(true);
+                    ui.set_status(format!("跳转至第 {num} 题").into());
+                }
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        ui.on_switch_main_tab(move |tab| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_main_tab(tab);
+        });
+    }
+
     // ---------------- 50ms 定时器 ----------------
     {
         let ui_weak = ui.as_weak();
@@ -1735,6 +1920,12 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 let mut st = state.borrow_mut();
                 update_subtitle(&ui, &mut st, pos, &last_sentence);
             }
+
+            // 试题联动
+            if ui.get_has_exercises() {
+                let mut st = state.borrow_mut();
+                update_exercise_sync(&ui, &mut st, pos);
+            }
         });
         std::mem::forget(timer);
     }
@@ -1785,6 +1976,10 @@ fn load_or_analyze_media(
     ui.set_active_word(-1);
     ui.set_has_subtitles(false);
     ui.set_has_chapters(false);
+    ui.set_has_exercises(false);
+    ui.set_exercise_submitted(false);
+    ui.set_current_exercises(ModelRc::new(VecModel::default()));
+    ui.set_current_exercise_material_title("".into());
     ui.set_next_line("".into());
     ui.set_chime_info("".into());
     ui.set_playing(false);
@@ -1864,13 +2059,24 @@ fn load_or_analyze_media(
                 lime_analyze::merge_repeated_materials(&limed.chapters, &sents)
             };
             let chapters = save_and_reload_chapters(&store, media_id, merged);
+            let limed_exercises = limed.exercises;
             if let Some(mid) = media_id {
                 if stale_subtitles {
                     let _ = store.borrow().clear_sentences(mid);
                 } else if !from_db {
                     let _ = store.borrow().save_sentences(mid, &sents);
                 }
+                if !limed_exercises.is_empty() {
+                    let _ = store.borrow().save_exercises(mid, &limed_exercises);
+                }
             }
+            let exercises = if !limed_exercises.is_empty() {
+                limed_exercises
+            } else {
+                media_id
+                    .and_then(|mid| store.borrow().load_exercises(mid).ok())
+                    .unwrap_or_default()
+            };
             let collapsed = state.borrow().collapsed_materials.clone();
             set_chapter_rows(ui, &chapters, &collapsed);
             ui.set_has_chapters(!chapters.is_empty());
@@ -1912,6 +2118,12 @@ fn load_or_analyze_media(
                 chapters: chapters.clone(),
             });
             st.sentences = sents;
+            st.exercises = exercises;
+            st.user_answers.clear();
+            st.exercise_submitted = false;
+            st.active_material_ordinal = 1;
+            st.active_question_num = None;
+            refresh_exercise_ui(ui, &st);
 
             if saved_ord > 0 && (saved_ord as usize) <= chapters.len() {
                 let hidden = hidden_rows(&chapters, &collapsed);
@@ -1975,6 +2187,7 @@ fn load_or_analyze_media(
 
                     let (saved_pos, saved_ord) =
                         st_ref.get_progress(mid).unwrap_or(None).unwrap_or((0, 0));
+                    let exercises = store.borrow().load_exercises(mid).unwrap_or_default();
 
                     let mut st = state.borrow_mut();
                     st.core = Some(AnalysisCore {
@@ -1990,6 +2203,12 @@ fn load_or_analyze_media(
                         chapters: chapters.clone(),
                     });
                     st.sentences = sents;
+                    st.exercises = exercises;
+                    st.user_answers.clear();
+                    st.exercise_submitted = false;
+                    st.active_material_ordinal = 1;
+                    st.active_question_num = None;
+                    refresh_exercise_ui(ui, &st);
 
                     if saved_ord > 0 && (saved_ord as usize) <= chapters.len() {
                         let hidden = hidden_rows(&chapters, &collapsed);
@@ -2006,6 +2225,15 @@ fn load_or_analyze_media(
     refresh_media_list(ui, &store.borrow(), &mut state.borrow_mut());
 
     if !cache_hit {
+        {
+            let mut st = state.borrow_mut();
+            st.exercises.clear();
+            st.user_answers.clear();
+            st.exercise_submitted = false;
+            st.active_material_ordinal = 1;
+            st.active_question_num = None;
+            refresh_exercise_ui(ui, &st);
+        }
         ui.set_status(format!("正在切分：{filename}").into());
         spawn_analyze(path, ui.as_weak(), tx.clone(), state.clone(), store.clone());
     }
@@ -2317,6 +2545,116 @@ fn update_subtitle(ui: &MainWindow, st: &mut GuiState, pos_ms: u64, last: &Cell<
     ui.set_active_word(active);
 }
 
+fn refresh_exercise_ui(ui: &MainWindow, st: &GuiState) {
+    if st.exercises.is_empty() {
+        ui.set_has_exercises(false);
+        ui.set_current_exercises(ModelRc::new(VecModel::default()));
+        ui.set_current_exercise_material_title("".into());
+        return;
+    }
+    ui.set_has_exercises(true);
+
+    let cur_mat_ord = st.active_material_ordinal;
+    let cur_mat = st
+        .exercises
+        .iter()
+        .find(|m| m.material_ordinal == cur_mat_ord)
+        .or_else(|| st.exercises.first());
+
+    let Some(mat) = cur_mat else {
+        ui.set_current_exercises(ModelRc::new(VecModel::default()));
+        ui.set_current_exercise_material_title("".into());
+        return;
+    };
+
+    ui.set_current_exercise_material_title(mat.title.clone().into());
+    ui.set_exercise_submitted(st.exercise_submitted);
+
+    let rows: Vec<ExerciseQuestionRow> = mat
+        .questions
+        .iter()
+        .map(|q| {
+            let selected_opt = st.user_answers.get(&q.num).cloned().unwrap_or_default();
+            let is_current = st.active_question_num == Some(q.num);
+            let opts: Vec<QuestionOptionItem> = q
+                .options
+                .iter()
+                .map(|opt_str| {
+                    let key = opt_str
+                        .chars()
+                        .find(|c| c.is_ascii_alphabetic())
+                        .map(|c| c.to_ascii_uppercase().to_string())
+                        .unwrap_or_else(|| "A".to_string());
+                    QuestionOptionItem {
+                        key: key.into(),
+                        text: opt_str.clone().into(),
+                    }
+                })
+                .collect();
+
+            ExerciseQuestionRow {
+                num: q.num as i32,
+                stem: q.stem.clone().into(),
+                options: ModelRc::new(VecModel::from(opts)),
+                selected_opt: selected_opt.into(),
+                correct_answer: q.answer.clone().unwrap_or_default().into(),
+                explanation: q.explanation.clone().unwrap_or_default().into(),
+                is_current,
+            }
+        })
+        .collect();
+
+    ui.set_current_exercises(ModelRc::new(VecModel::from(rows)));
+}
+
+fn update_exercise_sync(ui: &MainWindow, st: &mut GuiState, pos_ms: u64) {
+    if st.exercises.is_empty() {
+        return;
+    }
+
+    let Some(core) = st.core.as_ref() else { return };
+    if core.chapters.is_empty() {
+        return;
+    }
+
+    let cur_chap = core
+        .chapters
+        .iter()
+        .find(|c| pos_ms >= c.start_ms && pos_ms < c.end_ms);
+
+    let (mat_ord, q_num) = match cur_chap {
+        Some(c) if c.is_material() => {
+            let ord = if c.title == lime_core::INTRO_TITLE {
+                1
+            } else {
+                c.ordinal
+            };
+            (ord, None)
+        }
+        Some(c) => {
+            let p_ord = c
+                .parent
+                .and_then(|p_idx| core.chapters.get(p_idx))
+                .map(|p| p.ordinal)
+                .unwrap_or(1);
+            let num = c
+                .title
+                .strip_prefix("第")
+                .and_then(|s| s.strip_suffix("题"))
+                .and_then(|s| s.trim().parse::<u32>().ok())
+                .unwrap_or(c.ordinal);
+            (p_ord, Some(num))
+        }
+        None => (st.active_material_ordinal, None),
+    };
+
+    if mat_ord != st.active_material_ordinal || q_num != st.active_question_num {
+        st.active_material_ordinal = mat_ord;
+        st.active_question_num = q_num;
+        refresh_exercise_ui(ui, st);
+    }
+}
+
 pub fn file_label(p: &Path) -> String {
     p.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default()
 }
@@ -2483,6 +2821,64 @@ mod tests {
         // 解码参数换代 → 失效
         assert!(subtitle_cache_stale(Some("asr-pipeline/1|ml=1|sow=1"), true));
         assert!(subtitle_cache_stale(Some("asr-pipeline/1|ml=1|sow=1"), false));
+    }
+
+    #[test]
+    fn test_exercise_pipeline_roundtrip() {
+        let text = r#"
+Text 1
+1. What is the woman doing?
+A. Driving a car.
+B. Walking in the park.
+C. Waiting for a bus.
+答案: C
+解析: 女士在车站。
+
+Text 2
+2. Where are the speakers?
+A. In a library.  B. In a school.
+Key: A
+
+3. When does the class start?
+A. At 8:00.  B. At 9:00.
+Key: B
+"#;
+        // 1. 解析
+        let exercises = ExerciseParser::parse(text, 2);
+        assert_eq!(exercises.len(), 2);
+        assert_eq!(exercises[0].material_ordinal, 1);
+        assert_eq!(exercises[0].questions.len(), 1);
+        assert_eq!(exercises[0].questions[0].answer.as_deref(), Some("C"));
+        assert_eq!(exercises[1].material_ordinal, 2);
+        assert_eq!(exercises[1].questions.len(), 2);
+
+        // 2. 存入 SQLite 并回读
+        let store = Store::open_in_memory().unwrap();
+        let mid = store.upsert_media("audio.mp3", 100, 100, 10000, 44100, 2).unwrap();
+        store.save_exercises(mid, &exercises).unwrap();
+        let loaded_from_db = store.load_exercises(mid).unwrap();
+        assert_eq!(loaded_from_db, exercises);
+
+        // 3. 打包进 LimedFile 编解码
+        let meta = LimedMeta {
+            audio_filename: "audio.mp3".into(),
+            duration_ms: 10000,
+            sample_rate: 44100,
+            channels: 2,
+            file_size: 100,
+            created_at: 0,
+            version: 1,
+            generator: "test".into(),
+            asr_fp: "".into(),
+        };
+        let limed = LimedFile::new(meta, vec![], vec![]).with_exercises(exercises);
+        let encoded = limed.encode().unwrap();
+        let decoded = LimedFile::decode(&encoded).unwrap();
+        assert_eq!(decoded.exercises.len(), 2);
+        assert_eq!(decoded.exercises[0].questions[0].stem, "What is the woman doing?");
+        assert_eq!(decoded.exercises[0].questions[0].options[2], "C. Waiting for a bus.");
+        assert_eq!(decoded.exercises[0].questions[0].answer.as_deref(), Some("C"));
+        assert!(decoded.exercises[0].questions[0].explanation.as_ref().unwrap().contains("车站"));
     }
 }
 
