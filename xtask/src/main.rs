@@ -36,7 +36,7 @@ fn package_dist(raw_args: &[String]) {
     }
 
     let version = version
-        .unwrap_or_else(|| env::var("LIMELISTEN_VERSION").unwrap_or_else(|_| "0.1.2".to_string()));
+        .unwrap_or_else(|| env::var("LIMELISTEN_VERSION").unwrap_or_else(|_| "0.1.3".to_string()));
     let version = version.trim_start_matches('v');
 
     let os_str = if cfg!(target_os = "windows") {
