@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, Button, Slider, ScrollView, TextEdit } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, Slider, ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
 import "./assets/remixicon.ttf";
 
 global Ri {
@@ -40,6 +40,8 @@ global Ri {
     out property <string> external-link: "\u{ecaf}";
     out property <string> question-line: "\u{f035}";
     out property <string> survey: "\u{f1c4}";
+    out property <string> edit: "\u{ec86}";
+    out property <string> delete-icon: "\u{ec2a}";
 }
 
 component RiButton inherits Rectangle {
@@ -225,6 +227,9 @@ component ExerciseView inherits Rectangle {
     callback reset-exam();
     callback seek-question(int);
     callback open-import();
+    callback open-manual-entry();
+    callback edit-question(int);
+    callback delete-question(int);
 
     background: white;
     border-radius: 8px;
@@ -272,8 +277,15 @@ component ExerciseView inherits Rectangle {
             }
 
             RiButton {
+                icon: Ri.add;
+                text: "手动录入";
+                btn-height: 28px;
+                clicked => { root.open-manual-entry(); }
+            }
+
+            RiButton {
                 icon: Ri.survey;
-                text: "导入 / 修改试题";
+                text: "批量导入";
                 btn-height: 28px;
                 clicked => { root.open-import(); }
             }
@@ -308,7 +320,7 @@ component ExerciseView inherits Rectangle {
                 }
 
                 Text {
-                    text: root.has-exercises ? "随着播放切换到下一材料，试题将自动呈现" : "导入后将根据听力材料自动联动呈现试题，支持自测交卷与即时解析";
+                    text: root.has-exercises ? "随着播放切换到下一材料，试题将自动呈现" : "导入或手动录入后将根据听力材料自动联动呈现试题，支持自测交卷与即时解析";
                     color: #94a3b8;
                     font-size: 12px;
                     horizontal-alignment: center;
@@ -316,10 +328,18 @@ component ExerciseView inherits Rectangle {
 
                 HorizontalLayout {
                     alignment: center;
+                    spacing: 12px;
+
+                    RiButton {
+                        icon: Ri.add;
+                        text: "手动录入题目";
+                        primary: true;
+                        clicked => { root.open-manual-entry(); }
+                    }
+
                     RiButton {
                         icon: Ri.survey;
-                        text: "立即导入题目";
-                        primary: true;
+                        text: "批量粘贴导入";
                         clicked => { root.open-import(); }
                     }
                 }
@@ -382,6 +402,20 @@ component ExerciseView inherits Rectangle {
                                 text: "试听本题";
                                 btn-height: 24px;
                                 clicked => { root.seek-question(q.num); }
+                            }
+
+                            RiButton {
+                                icon: Ri.edit;
+                                text: "编辑";
+                                btn-height: 24px;
+                                clicked => { root.edit-question(q.num); }
+                            }
+
+                            RiButton {
+                                icon: Ri.delete-icon;
+                                text: "删除";
+                                btn-height: 24px;
+                                clicked => { root.delete-question(q.num); }
                             }
                         }
 
@@ -666,8 +700,24 @@ export component MainWindow inherits Window {
     in-out property <bool> has-exercises: false;
     in-out property <bool> exercise-submitted: false; // 自测交卷模式：true 表示已查看答案与解析
     in-out property <bool> show-exercise-modal: false;
+    in-out property <int> exercise-modal-tab: 0; // 0 = 批量粘贴导入, 1 = 手动录入
     in-out property <string> exercise-import-text: "";
     in-out property <string> exercise-import-error: "";
+
+    // 手动录入/修改试题字段
+    in-out property <bool> edit-q-is-editing: false;
+    in-out property <int> edit-q-original-num: 0;
+    in-out property <string> edit-q-mat-ordinal-text: "1";
+    in-out property <string> edit-q-mat-title-text: "材料 1";
+    in-out property <string> edit-q-num-text: "1";
+    in-out property <string> edit-q-stem: "";
+    in-out property <string> edit-q-opt-a: "";
+    in-out property <string> edit-q-opt-b: "";
+    in-out property <string> edit-q-opt-c: "";
+    in-out property <string> edit-q-opt-d: "";
+    in-out property <string> edit-q-answer: "";
+    in-out property <string> edit-q-explanation: "";
+    in-out property <string> edit-q-error: "";
 
     // ---- 回调命令 ----
     callback open-file();
@@ -693,12 +743,16 @@ export component MainWindow inherits Window {
     // 试题相关回调
     callback switch-main-tab(int);
     callback open-exercise-modal();
+    callback open-manual-exercise-modal();
     callback close-exercise-modal();
     callback submit-exercise-import(string);
     callback select-question-option(int, string);
     callback toggle-exercise-submitted();
     callback reset-exercise-exam();
     callback seek-to-question(int);
+    callback edit-exercise-question(int);
+    callback delete-exercise-question(int);
+    callback save-exercise-question(bool);
 
     // 测速与模型命令
     callback open-bench-modal();
@@ -1415,6 +1469,9 @@ export component MainWindow inherits Window {
                             reset-exam() => { root.reset-exercise-exam(); }
                             seek-question(num) => { root.seek-to-question(num); }
                             open-import() => { root.open-exercise-modal(); }
+                            open-manual-entry() => { root.open-manual-exercise-modal(); }
+                            edit-question(num) => { root.edit-exercise-question(num); }
+                            delete-question(num) => { root.delete-exercise-question(num); }
                         }
 
                         // 模式 2: 双栏题文对照
@@ -1433,6 +1490,9 @@ export component MainWindow inherits Window {
                                 reset-exam() => { root.reset-exercise-exam(); }
                                 seek-question(num) => { root.seek-to-question(num); }
                                 open-import() => { root.open-exercise-modal(); }
+                                open-manual-entry() => { root.open-manual-exercise-modal(); }
+                                edit-question(num) => { root.edit-exercise-question(num); }
+                                delete-question(num) => { root.delete-exercise-question(num); }
                             }
 
                             SubtitleStage {
@@ -2240,7 +2300,7 @@ export component MainWindow inherits Window {
         }
     }
 
-    // ================= 试题导入模态框 =================
+    // ================= 试题导入与录入模态框 =================
     if root.show-exercise-modal || self.opacity > 0.01 : Rectangle {
         x: 0px;
         y: 0px;
@@ -2257,7 +2317,7 @@ export component MainWindow inherits Window {
         }
 
         Rectangle {
-            width: 680px;
+            width: 720px;
             height: exercise-modal-content.preferred-height;
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2) + (root.show-exercise-modal ? 0px : 16px);
@@ -2289,13 +2349,72 @@ export component MainWindow inherits Window {
                     }
 
                     Text {
-                        text: "导入听力试题";
+                        text: root.exercise-modal-tab == 1 ? (root.edit-q-is-editing ? "编辑听力试题" : "手动录入听力试题") : "导入听力试题";
                         font-size: 16px;
                         font-weight: 700;
                         color: #0f172a;
                     }
 
                     Rectangle { horizontal-stretch: 1; }
+
+                    // 模式切换分段按钮
+                    Rectangle {
+                        height: 28px;
+                        border-radius: 6px;
+                        background: #f1f5f9;
+                        border-width: 1px;
+                        border-color: #e2e8f0;
+                        HorizontalLayout {
+                            padding: 2px;
+                            spacing: 2px;
+
+                            // 批量导入 Tab
+                            Rectangle {
+                                border-radius: 4px;
+                                background: root.exercise-modal-tab == 0 ? #ffffff : transparent;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    alignment: center;
+                                    Text {
+                                        text: "批量粘贴导入";
+                                        font-size: 11px;
+                                        font-weight: root.exercise-modal-tab == 0 ? 700 : 500;
+                                        color: root.exercise-modal-tab == 0 ? #1d4ed8 : #64748b;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.exercise-modal-tab = 0; }
+                                }
+                            }
+
+                            // 手动录入 Tab
+                            Rectangle {
+                                border-radius: 4px;
+                                background: root.exercise-modal-tab == 1 ? #ffffff : transparent;
+                                HorizontalLayout {
+                                    padding-left: 10px;
+                                    padding-right: 10px;
+                                    alignment: center;
+                                    Text {
+                                        text: "手动录入题目";
+                                        font-size: 11px;
+                                        font-weight: root.exercise-modal-tab == 1 ? 700 : 500;
+                                        color: root.exercise-modal-tab == 1 ? #1d4ed8 : #64748b;
+                                        vertical-alignment: center;
+                                    }
+                                }
+                                TouchArea {
+                                    mouse-cursor: pointer;
+                                    clicked => { root.exercise-modal-tab = 1; }
+                                }
+                            }
+                        }
+                    }
+
+                    Rectangle { width: 8px; }
 
                     Rectangle {
                         width: 28px;
@@ -2314,45 +2433,418 @@ export component MainWindow inherits Window {
                     }
                 }
 
-                // 说明提示
-                Text {
-                    text: "直接将听力试题粘贴至下方（支持从 Word、PDF 或网页复制）。系统将自动识别材料分组（如 Text 1/Passage 1）、题号、选项（A/B/C/D）与答案解析。也可以直接粘贴 JSON 格式。";
-                    font-size: 12px;
-                    color: #64748b;
-                    wrap: word-wrap;
-                }
+                // 模式 0: 批量粘贴导入
+                if root.exercise-modal-tab == 0 : VerticalLayout {
+                    spacing: 12px;
 
-                // 多行输入框
-                TextEdit {
-                    height: 240px;
-                    font-size: 13px;
-                    text <=> root.exercise-import-text;
-                    placeholder-text: "请在此粘贴或输入听力试题文本或 JSON...\n\n示例格式：\nText 1\n1. What is the woman doing?\nA. Driving a car.\nB. Walking in the park.\nC. Waiting for a bus.\n答案: C\n解析: 女士在车站。";
-                }
-
-                if root.exercise-import-error != "" : Text {
-                    text: root.exercise-import-error;
-                    color: #dc2626;
-                    font-size: 12px;
-                    font-weight: 600;
-                }
-
-                // 底部操作按钮
-                HorizontalLayout {
-                    spacing: 10px;
-                    alignment: end;
-
-                    RiButton {
-                        text: "取消";
-                        clicked => { root.close-exercise-modal(); }
+                    // 说明提示
+                    Text {
+                        text: "直接将听力试题粘贴至下方（支持从 Word、PDF 或网页复制）。系统将自动识别材料分组（如 Text 1/Passage 1）、题号、选项（A/B/C/D）与答案解析。也可以直接粘贴 JSON 格式。";
+                        font-size: 12px;
+                        color: #64748b;
+                        wrap: word-wrap;
                     }
 
-                    RiButton {
-                        icon: Ri.check;
-                        text: "解析并导入试题";
-                        primary: true;
-                        enabled: root.exercise-import-text != "";
-                        clicked => { root.submit-exercise-import(root.exercise-import-text); }
+                    // 多行输入框
+                    TextEdit {
+                        height: 240px;
+                        font-size: 13px;
+                        text <=> root.exercise-import-text;
+                        placeholder-text: "请在此粘贴或输入听力试题文本或 JSON...\n\n示例格式：\nText 1\n1. What is the woman doing?\nA. Driving a car.\nB. Walking in the park.\nC. Waiting for a bus.\n答案: C\n解析: 女士在车站。";
+                    }
+
+                    if root.exercise-import-error != "" : Text {
+                        text: root.exercise-import-error;
+                        color: #dc2626;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+
+                    // 底部操作按钮
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+
+                        RiButton {
+                            text: "取消";
+                            clicked => { root.close-exercise-modal(); }
+                        }
+
+                        RiButton {
+                            icon: Ri.check;
+                            text: "解析并导入试题";
+                            primary: true;
+                            enabled: root.exercise-import-text != "";
+                            clicked => { root.submit-exercise-import(root.exercise-import-text); }
+                        }
+                    }
+                }
+
+                // 模式 1: 手动录入/编辑题目
+                if root.exercise-modal-tab == 1 : VerticalLayout {
+                    spacing: 11px;
+
+                    // 所属材料与题号
+                    HorizontalLayout {
+                        spacing: 16px;
+                        cross-axis-alignment: center;
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: "所属材料:";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #334155;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                width: 44px;
+                                text <=> root.edit-q-mat-ordinal-text;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: "材料名称:";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #334155;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                width: 130px;
+                                text <=> root.edit-q-mat-title-text;
+                                font-size: 12px;
+                                placeholder-text: "如 Text 1";
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 6px;
+                            cross-axis-alignment: center;
+                            Text {
+                                text: "题号:";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #334155;
+                                vertical-alignment: center;
+                            }
+                            LineEdit {
+                                width: 50px;
+                                text <=> root.edit-q-num-text;
+                                font-size: 12px;
+                                horizontal-alignment: center;
+                            }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    // 题干
+                    VerticalLayout {
+                        spacing: 4px;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "题干内容";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #334155;
+                            }
+                            Text {
+                                text: "*";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #dc2626;
+                            }
+                        }
+                        LineEdit {
+                            text <=> root.edit-q-stem;
+                            font-size: 13px;
+                            placeholder-text: "请输入题干文本，例如: Where does the conversation take place?";
+                        }
+                    }
+
+                    // 选项 A/B/C/D
+                    VerticalLayout {
+                        spacing: 6px;
+                        HorizontalLayout {
+                            spacing: 4px;
+                            Text {
+                                text: "选项内容 (A、B必填，C、D选填)";
+                                font-size: 12px;
+                                font-weight: 600;
+                                color: #334155;
+                            }
+                            Text {
+                                text: "*";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: #dc2626;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            Rectangle {
+                                width: 20px;
+                                Text {
+                                    text: "A";
+                                    font-weight: 700;
+                                    font-size: 13px;
+                                    color: #2563eb;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.edit-q-opt-a;
+                                placeholder-text: "选项 A 内容";
+                                font-size: 12px;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            Rectangle {
+                                width: 20px;
+                                Text {
+                                    text: "B";
+                                    font-weight: 700;
+                                    font-size: 13px;
+                                    color: #2563eb;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.edit-q-opt-b;
+                                placeholder-text: "选项 B 内容";
+                                font-size: 12px;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            Rectangle {
+                                width: 20px;
+                                Text {
+                                    text: "C";
+                                    font-weight: 700;
+                                    font-size: 13px;
+                                    color: #64748b;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.edit-q-opt-c;
+                                placeholder-text: "选项 C 内容 (可选)";
+                                font-size: 12px;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            spacing: 8px;
+                            cross-axis-alignment: center;
+                            Rectangle {
+                                width: 20px;
+                                Text {
+                                    text: "D";
+                                    font-weight: 700;
+                                    font-size: 13px;
+                                    color: #64748b;
+                                    horizontal-alignment: center;
+                                    vertical-alignment: center;
+                                }
+                            }
+                            LineEdit {
+                                horizontal-stretch: 1;
+                                text <=> root.edit-q-opt-d;
+                                placeholder-text: "选项 D 内容 (可选)";
+                                font-size: 12px;
+                            }
+                        }
+                    }
+
+                    // 标准答案
+                    HorizontalLayout {
+                        spacing: 10px;
+                        cross-axis-alignment: center;
+
+                        Text {
+                            text: "标准答案:";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: #334155;
+                            vertical-alignment: center;
+                        }
+
+                        Rectangle {
+                            width: 66px;
+                            height: 26px;
+                            border-radius: 5px;
+                            background: root.edit-q-answer == "" ? #e2e8f0 : #ffffff;
+                            border-width: 1px;
+                            border-color: root.edit-q-answer == "" ? #94a3b8 : #cbd5e1;
+                            Text {
+                                text: "无 / 未设";
+                                font-size: 11px;
+                                font-weight: root.edit-q-answer == "" ? 700 : 500;
+                                color: root.edit-q-answer == "" ? #0f172a : #64748b;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.edit-q-answer = ""; }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 26px;
+                            border-radius: 5px;
+                            background: root.edit-q-answer == "A" ? #3b82f6 : #ffffff;
+                            border-width: 1px;
+                            border-color: root.edit-q-answer == "A" ? #2563eb : #cbd5e1;
+                            Text {
+                                text: "A";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: root.edit-q-answer == "A" ? #ffffff : #1e293b;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.edit-q-answer = "A"; }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 26px;
+                            border-radius: 5px;
+                            background: root.edit-q-answer == "B" ? #3b82f6 : #ffffff;
+                            border-width: 1px;
+                            border-color: root.edit-q-answer == "B" ? #2563eb : #cbd5e1;
+                            Text {
+                                text: "B";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: root.edit-q-answer == "B" ? #ffffff : #1e293b;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.edit-q-answer = "B"; }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 26px;
+                            border-radius: 5px;
+                            background: root.edit-q-answer == "C" ? #3b82f6 : #ffffff;
+                            border-width: 1px;
+                            border-color: root.edit-q-answer == "C" ? #2563eb : #cbd5e1;
+                            Text {
+                                text: "C";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: root.edit-q-answer == "C" ? #ffffff : #1e293b;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.edit-q-answer = "C"; }
+                            }
+                        }
+
+                        Rectangle {
+                            width: 40px;
+                            height: 26px;
+                            border-radius: 5px;
+                            background: root.edit-q-answer == "D" ? #3b82f6 : #ffffff;
+                            border-width: 1px;
+                            border-color: root.edit-q-answer == "D" ? #2563eb : #cbd5e1;
+                            Text {
+                                text: "D";
+                                font-size: 12px;
+                                font-weight: 700;
+                                color: root.edit-q-answer == "D" ? #ffffff : #1e293b;
+                                x: (parent.width - self.width) / 2;
+                                y: (parent.height - self.height) / 2;
+                            }
+                            TouchArea {
+                                mouse-cursor: pointer;
+                                clicked => { root.edit-q-answer = "D"; }
+                            }
+                        }
+
+                        Rectangle { horizontal-stretch: 1; }
+                    }
+
+                    // 答案解析
+                    VerticalLayout {
+                        spacing: 4px;
+                        Text {
+                            text: "答案解析 / 提示 (可选)";
+                            font-size: 12px;
+                            font-weight: 600;
+                            color: #334155;
+                        }
+                        LineEdit {
+                            text <=> root.edit-q-explanation;
+                            font-size: 12px;
+                            placeholder-text: "如: 女士在对话第三句明确表示正在车站等车。";
+                        }
+                    }
+
+                    if root.edit-q-error != "" : Text {
+                        text: root.edit-q-error;
+                        color: #dc2626;
+                        font-size: 12px;
+                        font-weight: 600;
+                    }
+
+                    // 底部操作按钮
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: end;
+
+                        RiButton {
+                            text: "取消";
+                            clicked => { root.close-exercise-modal(); }
+                        }
+
+                        if !root.edit-q-is-editing : RiButton {
+                            icon: Ri.add;
+                            text: "保存并继续录入下一题";
+                            clicked => { root.save-exercise-question(true); }
+                        }
+
+                        RiButton {
+                            icon: Ri.check;
+                            text: root.edit-q-is-editing ? "保存修改" : "保存本题";
+                            primary: true;
+                            clicked => { root.save-exercise-question(false); }
+                        }
                     }
                 }
             }

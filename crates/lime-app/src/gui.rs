@@ -17,7 +17,7 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use lime_audio::Engine;
 use lime_core::{
     find_accompanying_audio, find_matching_limed, normalize_chapters, Chapter, ChapterSource,
-    ExerciseParser, LimedFile, LimedMeta, MaterialExercise, Sentence, Word,
+    ExerciseParser, ExerciseQuestion, LimedFile, LimedMeta, MaterialExercise, Sentence, Word,
 };
 use lime_store::{MediaItem, Store};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -1647,8 +1647,19 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let ui_weak = ui.as_weak();
         ui.on_open_exercise_modal(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
+            ui.set_exercise_modal_tab(0);
             ui.set_exercise_import_error("".into());
             ui.set_show_exercise_modal(true);
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_open_manual_exercise_modal(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let st = state.borrow();
+            init_manual_exercise_modal(&ui, &st);
         });
     }
 
@@ -1658,6 +1669,235 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_show_exercise_modal(false);
             ui.set_exercise_import_error("".into());
+            ui.set_edit_q_error("".into());
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_edit_exercise_question(move |num| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let st = state.borrow();
+            let mut target = None;
+            for m in &st.exercises {
+                if let Some(q) = m.questions.iter().find(|q| q.num == num as u32) {
+                    target = Some((m.material_ordinal, m.title.clone(), q.clone()));
+                    break;
+                }
+            }
+
+            if let Some((mat_ord, mat_title, q)) = target {
+                ui.set_exercise_modal_tab(1);
+                ui.set_edit_q_is_editing(true);
+                ui.set_edit_q_original_num(q.num as i32);
+                ui.set_edit_q_mat_ordinal_text(mat_ord.to_string().into());
+                ui.set_edit_q_mat_title_text(mat_title.into());
+                ui.set_edit_q_num_text(q.num.to_string().into());
+                ui.set_edit_q_stem(q.stem.into());
+
+                ui.set_edit_q_opt_a(strip_option_prefix(q.options.get(0).map(|s| s.as_str()).unwrap_or("")).into());
+                ui.set_edit_q_opt_b(strip_option_prefix(q.options.get(1).map(|s| s.as_str()).unwrap_or("")).into());
+                ui.set_edit_q_opt_c(strip_option_prefix(q.options.get(2).map(|s| s.as_str()).unwrap_or("")).into());
+                ui.set_edit_q_opt_d(strip_option_prefix(q.options.get(3).map(|s| s.as_str()).unwrap_or("")).into());
+
+                ui.set_edit_q_answer(q.answer.unwrap_or_default().into());
+                ui.set_edit_q_explanation(q.explanation.unwrap_or_default().into());
+                ui.set_edit_q_error("".into());
+                ui.set_show_exercise_modal(true);
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let store = store.clone();
+        ui.on_delete_exercise_question(move |num| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let q_num = num as u32;
+            let existed = {
+                let mut st = state.borrow_mut();
+                let mut removed = false;
+                for m in st.exercises.iter_mut() {
+                    let before = m.questions.len();
+                    m.questions.retain(|q| q.num != q_num);
+                    if m.questions.len() < before {
+                        removed = true;
+                    }
+                }
+                if removed {
+                    st.exercises.retain(|m| !m.questions.is_empty());
+                    st.user_answers.remove(&q_num);
+                    if let Some(mid) = st.media_id {
+                        let _ = store.borrow().save_exercises(mid, &st.exercises);
+                    }
+                    refresh_exercise_ui(&ui, &st);
+                    true
+                } else {
+                    false
+                }
+            };
+            if existed {
+                ui.set_status(format!("已删除第 {q_num} 题").into());
+            }
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        let store = store.clone();
+        ui.on_save_exercise_question(move |keep_open| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+
+            let mat_ord_str = ui.get_edit_q_mat_ordinal_text().trim().to_string();
+            let Ok(mat_ord) = mat_ord_str.parse::<u32>() else {
+                ui.set_edit_q_error("所属材料序号必须为正整数（如 1、2）".into());
+                return;
+            };
+            if mat_ord == 0 {
+                ui.set_edit_q_error("所属材料序号必须大于 0".into());
+                return;
+            }
+
+            let mut mat_title = ui.get_edit_q_mat_title_text().trim().to_string();
+            if mat_title.is_empty() {
+                mat_title = format!("材料 {mat_ord}");
+            }
+
+            let q_num_str = ui.get_edit_q_num_text().trim().to_string();
+            let Ok(q_num) = q_num_str.parse::<u32>() else {
+                ui.set_edit_q_error("题号必须为正整数（如 1、2、3）".into());
+                return;
+            };
+            if q_num == 0 {
+                ui.set_edit_q_error("题号必须大于 0".into());
+                return;
+            }
+
+            let stem = ui.get_edit_q_stem().trim().to_string();
+            if stem.is_empty() {
+                ui.set_edit_q_error("题干内容不能为空".into());
+                return;
+            }
+
+            let opt_a = ui.get_edit_q_opt_a().trim().to_string();
+            let opt_b = ui.get_edit_q_opt_b().trim().to_string();
+            let opt_c = ui.get_edit_q_opt_c().trim().to_string();
+            let opt_d = ui.get_edit_q_opt_d().trim().to_string();
+
+            if opt_a.is_empty() || opt_b.is_empty() {
+                ui.set_edit_q_error("选项 A 和 选项 B 均为必填项".into());
+                return;
+            }
+
+            let mut options = vec![
+                format_option('A', &opt_a),
+                format_option('B', &opt_b),
+            ];
+            if !opt_c.is_empty() {
+                options.push(format_option('C', &opt_c));
+            }
+            if !opt_d.is_empty() {
+                options.push(format_option('D', &opt_d));
+            }
+
+            let ans_str = ui.get_edit_q_answer().trim().to_ascii_uppercase();
+            let answer = if ans_str.is_empty() {
+                None
+            } else {
+                match ans_str.as_str() {
+                    "A" => Some("A".to_string()),
+                    "B" => Some("B".to_string()),
+                    "C" => {
+                        if opt_c.is_empty() {
+                            ui.set_edit_q_error("标准答案选择了 C，但选项 C 未填写内容".into());
+                            return;
+                        }
+                        Some("C".to_string())
+                    }
+                    "D" => {
+                        if opt_d.is_empty() {
+                            ui.set_edit_q_error("标准答案选择了 D，但选项 D 未填写内容".into());
+                            return;
+                        }
+                        Some("D".to_string())
+                    }
+                    _ => None,
+                }
+            };
+
+            let expl_str = ui.get_edit_q_explanation().trim().to_string();
+            let explanation = if expl_str.is_empty() {
+                None
+            } else {
+                Some(expl_str)
+            };
+
+            let orig_num = ui.get_edit_q_original_num() as u32;
+
+            let mut q = ExerciseQuestion::new(q_num, stem, options);
+            q.answer = answer;
+            q.explanation = explanation;
+
+            {
+                let mut st = state.borrow_mut();
+
+                for m in st.exercises.iter_mut() {
+                    m.questions.retain(|item| {
+                        if orig_num > 0 && item.num == orig_num {
+                            return false;
+                        }
+                        if item.num == q_num {
+                            return false;
+                        }
+                        true
+                    });
+                }
+                st.exercises.retain(|m| m.material_ordinal == mat_ord || !m.questions.is_empty());
+
+                if let Some(target_mat) = st.exercises.iter_mut().find(|m| m.material_ordinal == mat_ord) {
+                    target_mat.title = mat_title;
+                    target_mat.questions.push(q);
+                    target_mat.questions.sort_by_key(|item| item.num);
+                } else {
+                    st.exercises.push(MaterialExercise::new(mat_ord, mat_title, vec![q]));
+                    st.exercises.sort_by_key(|m| m.material_ordinal);
+                }
+
+                st.active_material_ordinal = mat_ord;
+                st.exercise_submitted = false;
+
+                if let Some(mid) = st.media_id {
+                    let _ = store.borrow().save_exercises(mid, &st.exercises);
+                }
+
+                refresh_exercise_ui(&ui, &st);
+            }
+
+            ui.set_edit_q_error("".into());
+
+            if keep_open {
+                let next_num = q_num + 1;
+                ui.set_edit_q_is_editing(false);
+                ui.set_edit_q_original_num(0);
+                ui.set_edit_q_num_text(next_num.to_string().into());
+                ui.set_edit_q_stem("".into());
+                ui.set_edit_q_opt_a("".into());
+                ui.set_edit_q_opt_b("".into());
+                ui.set_edit_q_opt_c("".into());
+                ui.set_edit_q_opt_d("".into());
+                ui.set_edit_q_answer("".into());
+                ui.set_edit_q_explanation("".into());
+                ui.set_status(format!("已保存试题 第 {q_num} 题，可继续录入第 {next_num} 题").into());
+            } else {
+                ui.set_show_exercise_modal(false);
+                if ui.get_main_tab() == 0 {
+                    ui.set_main_tab(1);
+                }
+                ui.set_status(format!("已成功保存试题 第 {q_num} 题").into());
+            }
         });
     }
 
@@ -2662,6 +2902,84 @@ fn update_subtitle(ui: &MainWindow, st: &mut GuiState, pos_ms: u64, last: &Cell<
     ui.set_active_word(active);
 }
 
+fn format_option(key: char, raw: &str) -> String {
+    let trimmed = raw.trim();
+    let prefix_dot = format!("{key}.");
+    let prefix_cn = format!("{key}、");
+    let prefix_colon = format!("{key}:");
+    let prefix_space = format!("{key} ");
+    let mut clean = trimmed;
+    if clean.to_ascii_uppercase().starts_with(&prefix_dot) {
+        clean = clean[prefix_dot.len()..].trim();
+    } else if clean.to_ascii_uppercase().starts_with(&prefix_cn) {
+        clean = clean[prefix_cn.len()..].trim();
+    } else if clean.to_ascii_uppercase().starts_with(&prefix_colon) {
+        clean = clean[prefix_colon.len()..].trim();
+    } else if clean.to_ascii_uppercase().starts_with(&prefix_space) {
+        clean = clean[prefix_space.len()..].trim();
+    }
+    format!("{key}. {clean}")
+}
+
+fn strip_option_prefix(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some((prefix, rest)) = trimmed.split_once(['.', '、', ':', ' ']) {
+        if prefix.len() == 1 && prefix.chars().next().unwrap_or(' ').is_ascii_alphabetic() {
+            return rest.trim().to_string();
+        }
+    }
+    trimmed.to_string()
+}
+
+fn init_manual_exercise_modal(ui: &MainWindow, st: &GuiState) {
+    ui.set_exercise_modal_tab(1);
+    ui.set_edit_q_is_editing(false);
+    ui.set_edit_q_original_num(0);
+
+    let mat_ord = if st.active_material_ordinal > 0 {
+        st.active_material_ordinal
+    } else {
+        1
+    };
+    ui.set_edit_q_mat_ordinal_text(mat_ord.to_string().into());
+
+    let mat_title = st
+        .exercises
+        .iter()
+        .find(|m| m.material_ordinal == mat_ord)
+        .map(|m| m.title.clone())
+        .or_else(|| {
+            st.core.as_ref().and_then(|core| {
+                core.chapters
+                    .iter()
+                    .find(|c| c.is_material() && c.ordinal == mat_ord)
+                    .map(|c| c.title.clone())
+            })
+        })
+        .unwrap_or_else(|| format!("材料 {mat_ord}"));
+    ui.set_edit_q_mat_title_text(mat_title.into());
+
+    let next_q_num = st
+        .exercises
+        .iter()
+        .flat_map(|m| &m.questions)
+        .map(|q| q.num)
+        .max()
+        .unwrap_or(0)
+        + 1;
+    ui.set_edit_q_num_text(next_q_num.to_string().into());
+
+    ui.set_edit_q_stem("".into());
+    ui.set_edit_q_opt_a("".into());
+    ui.set_edit_q_opt_b("".into());
+    ui.set_edit_q_opt_c("".into());
+    ui.set_edit_q_opt_d("".into());
+    ui.set_edit_q_answer("".into());
+    ui.set_edit_q_explanation("".into());
+    ui.set_edit_q_error("".into());
+    ui.set_show_exercise_modal(true);
+}
+
 fn refresh_exercise_ui(ui: &MainWindow, st: &GuiState) {
     if st.exercises.is_empty() {
         ui.set_has_exercises(false);
@@ -2957,11 +3275,70 @@ mod tests {
         ui.set_show_exercise_modal(true);
         assert!(ui.get_show_exercise_modal());
 
+        // 1. 批量导入文本绑定测试
         ui.set_exercise_import_text("Text 1\n1. Question\nA. Opt\n答案: A".into());
         assert_eq!(
             ui.get_exercise_import_text(),
             "Text 1\n1. Question\nA. Opt\n答案: A"
         );
+
+        // 2. 手动录入模式表单字段绑定测试
+        ui.set_exercise_modal_tab(1);
+        assert_eq!(ui.get_exercise_modal_tab(), 1);
+
+        ui.set_edit_q_mat_ordinal_text("2".into());
+        ui.set_edit_q_mat_title_text("Text 2".into());
+        ui.set_edit_q_num_text("5".into());
+        ui.set_edit_q_stem("What does the man want?".into());
+        ui.set_edit_q_opt_a("A cup of tea".into());
+        ui.set_edit_q_opt_b("A cup of coffee".into());
+        ui.set_edit_q_opt_c("A glass of water".into());
+        ui.set_edit_q_answer("B".into());
+        ui.set_edit_q_explanation("He asked for coffee.".into());
+
+        assert_eq!(ui.get_edit_q_mat_ordinal_text(), "2");
+        assert_eq!(ui.get_edit_q_mat_title_text(), "Text 2");
+        assert_eq!(ui.get_edit_q_num_text(), "5");
+        assert_eq!(ui.get_edit_q_stem(), "What does the man want?");
+        assert_eq!(ui.get_edit_q_opt_a(), "A cup of tea");
+        assert_eq!(ui.get_edit_q_opt_b(), "A cup of coffee");
+        assert_eq!(ui.get_edit_q_opt_c(), "A glass of water");
+        assert_eq!(ui.get_edit_q_answer(), "B");
+        assert_eq!(ui.get_edit_q_explanation(), "He asked for coffee.");
+
+        // 3. 测试 init_manual_exercise_modal 自动填充下一题题号及当前材料
+        let mut st = GuiState::default();
+        st.active_material_ordinal = 2;
+        st.exercises = vec![
+            MaterialExercise::new(
+                1,
+                "Text 1",
+                vec![ExerciseQuestion::new(
+                    1,
+                    "Q1",
+                    vec!["A. 1".into(), "B. 2".into()],
+                )],
+            ),
+            MaterialExercise::new(
+                2,
+                "Text 2",
+                vec![ExerciseQuestion::new(
+                    2,
+                    "Q2",
+                    vec!["A. 3".into(), "B. 4".into()],
+                )],
+            ),
+        ];
+
+        init_manual_exercise_modal(&ui, &st);
+        assert_eq!(ui.get_exercise_modal_tab(), 1);
+        assert!(!ui.get_edit_q_is_editing());
+        assert_eq!(ui.get_edit_q_mat_ordinal_text(), "2");
+        assert_eq!(ui.get_edit_q_mat_title_text(), "Text 2");
+        assert_eq!(ui.get_edit_q_num_text(), "3");
+        assert_eq!(ui.get_edit_q_stem(), "");
+        assert_eq!(ui.get_edit_q_opt_a(), "");
+        assert_eq!(ui.get_edit_q_opt_b(), "");
     }
 
     #[test]
@@ -3035,5 +3412,21 @@ Key: B
             .as_ref()
             .unwrap()
             .contains("车站"));
+    }
+
+    #[test]
+    fn test_format_and_strip_option_prefix() {
+        assert_eq!(format_option('A', "In a hotel"), "A. In a hotel");
+        assert_eq!(format_option('A', "A. In a hotel"), "A. In a hotel");
+        assert_eq!(format_option('B', "B、At the station"), "B. At the station");
+        assert_eq!(format_option('C', "c: In the park"), "C. In the park");
+        assert_eq!(format_option('D', "D On a plane"), "D. On a plane");
+
+        assert_eq!(strip_option_prefix("A. In a hotel"), "In a hotel");
+        assert_eq!(strip_option_prefix("B、 At the station"), "At the station");
+        assert_eq!(strip_option_prefix("C: In the park"), "In the park");
+        assert_eq!(strip_option_prefix("D On a plane"), "On a plane");
+        assert_eq!(strip_option_prefix("Just content"), "Just content");
+        assert_eq!(strip_option_prefix(""), "");
     }
 }
