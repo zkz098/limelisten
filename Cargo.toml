@@ -17,7 +17,11 @@ crossbeam-channel = "0.5"
 parking_lot = "0.12"
 log = "0.4"
 env_logger = "0.11"
-slint = "1.17"
+# 只保留实际用到的 winit + femtovg + 软件渲染回退；
+# 去掉未使用的 accessibility / system-tray，减小包体与初始化开销。
+slint = { version = "1.17", default-features = false, features = [
+    "std", "backend-default", "renderer-femtovg", "renderer-software", "compat-1-2",
+] }
 slint-build = "1.17"
 # 固定 0.5：0.6 是破坏性重构（AudioCodecParameters/AudioSpec/plane 等全新 API），
 # 而 0.5 是 rodio 等生态广泛使用的稳定 API，工程上更划算。见 docs/PLAN.md 备注。

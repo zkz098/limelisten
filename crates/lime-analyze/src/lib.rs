@@ -12,7 +12,9 @@ pub mod chime;
 pub mod repeat;
 pub mod snap;
 
-pub use chime::{detect_chimes, Chime, ChimeParams};
+pub use chime::{
+    detect_chimes, detect_chimes_from_envelopes, BandEnvelopeAccumulator, Chime, ChimeParams,
+};
 pub use repeat::{
     merge_repeated_materials, merge_repeated_materials_with, RepeatMerge, RepeatParams,
 };
@@ -82,23 +84,89 @@ impl Gap {
 
 /// 10 ms 级能量包络（dBFS）。
 pub fn energy_envelope(samples: &[f32], sample_rate: u32, params: &AnalyzeParams) -> Vec<f32> {
-    let frame = ((params.frame_ms / 1000.0) * sample_rate as f32)
-        .round()
-        .max(1.0) as usize;
-    let hop = ((params.hop_ms / 1000.0) * sample_rate as f32)
-        .round()
-        .max(1.0) as usize;
-    if samples.len() < frame {
-        return Vec::new();
+    let mut acc = EnvelopeAccumulator::new(sample_rate, params.frame_ms, params.hop_ms);
+    acc.push(samples);
+    acc.finish().0
+}
+
+/// 流式能量包络累加器：内存只与一个分析窗口有关，不随音频时长增长。
+///
+/// 切分/叮咚检测只需要 5 ms 级的包络，不需要把整段 PCM 留在内存里。
+/// 按任意大小的块 `push` 进来的结果与 `energy_envelope` 整段计算完全一致。
+pub struct EnvelopeAccumulator {
+    frame: usize,
+    hop: usize,
+    sample_rate: u32,
+    pending: Vec<f32>,
+    /// hop > frame 时，下一帧开始前还要从后续输入里丢弃的样本数。
+    skip: usize,
+    env: Vec<f32>,
+}
+
+impl EnvelopeAccumulator {
+    pub fn new(sample_rate: u32, frame_ms: f32, hop_ms: f32) -> Self {
+        let sr = sample_rate.max(1);
+        let frame = ((frame_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
+        let hop = ((hop_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
+        Self {
+            frame,
+            hop,
+            sample_rate: sr,
+            pending: Vec::with_capacity(frame + hop),
+            skip: 0,
+            env: Vec::new(),
+        }
     }
-    let n = 1 + (samples.len() - frame) / hop;
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let seg = &samples[i * hop..i * hop + frame];
-        let mean_sq = seg.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / frame as f64;
-        out.push((10.0 * (mean_sq + 1e-20).log10()) as f32);
+
+    pub fn push(&mut self, mut samples: &[f32]) {
+        // 解码器可能一次给很大一块；限制单次缓冲量，避免每 hop 都搬运整个大 Vec，
+        // 把 `drain(..hop)` 退化成 O(n²)。
+        let step = self.frame.max(self.hop);
+        while !samples.is_empty() {
+            let take = samples.len().min(step);
+            self.pending.extend_from_slice(&samples[..take]);
+            samples = &samples[take..];
+            self.process_pending();
+        }
     }
-    out
+
+    fn process_pending(&mut self) {
+        loop {
+            if self.skip > 0 {
+                let n = self.skip.min(self.pending.len());
+                self.pending.drain(..n);
+                self.skip -= n;
+                if self.skip > 0 {
+                    break;
+                }
+            }
+            if self.pending.len() < self.frame {
+                break;
+            }
+            let seg = &self.pending[..self.frame];
+            let mean_sq =
+                seg.iter().map(|s| (*s as f64) * (*s as f64)).sum::<f64>() / self.frame as f64;
+            self.env.push((10.0 * (mean_sq + 1e-20).log10()) as f32);
+            // 帧间重叠：丢掉一个 hop 后，缓冲区起点就是下一帧的起点。
+            // hop > frame 时这次输入可能还不够丢，记下剩余量等后续样本补齐。
+            if self.pending.len() >= self.hop {
+                self.pending.drain(..self.hop);
+            } else {
+                self.skip = self.hop - self.pending.len();
+                self.pending.clear();
+            }
+        }
+    }
+
+    /// 真实帧移（ms）：帧移按采样点取整后可能不等于名义值，时间换算必须用它。
+    pub fn hop_ms(&self) -> f32 {
+        self.hop as f32 / self.sample_rate as f32 * 1000.0
+    }
+
+    pub fn finish(self) -> (Vec<f32>, f32) {
+        let hop_ms = self.hop_ms();
+        (self.env, hop_ms)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -524,6 +592,48 @@ mod tests {
         assert_eq!(questions.len(), 1, "不应出现 0–40 ms 的空题: {chapters:?}");
         assert_eq!(questions[0].start_ms, 0);
         assert_eq!(questions[0].end_ms, 20_000);
+    }
+
+    /// 流式累加器必须与整段一次计算完全一致（分析内存优化的核心前提）。
+    #[test]
+    fn streaming_envelope_matches_batch() {
+        let sr = 44_100u32;
+        let params = AnalyzeParams::default();
+        let mut x = vec![0.0f32; sr as usize * 3];
+        for (i, v) in x.iter_mut().enumerate() {
+            if (i / 4410) % 3 == 1 {
+                *v = 0.25 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin();
+            }
+        }
+
+        let mut batch = EnvelopeAccumulator::new(sr, params.frame_ms, params.hop_ms);
+        batch.push(&x);
+        let (batch_env, batch_hop) = batch.finish();
+
+        let mut streamed = EnvelopeAccumulator::new(sr, params.frame_ms, params.hop_ms);
+        for chunk in x.chunks(997) {
+            streamed.push(chunk);
+        }
+        let (streamed_env, streamed_hop) = streamed.finish();
+
+        assert_eq!(batch_env, streamed_env);
+        assert_eq!(batch_hop, streamed_hop);
+        assert_eq!(batch_env, energy_envelope(&x, sr, &params));
+    }
+
+    /// hop > frame 的极端参数也不能 panic，帧数要与定义一致。
+    #[test]
+    fn streaming_envelope_handles_hop_larger_than_frame() {
+        let sr = 1000u32;
+        let x = vec![0.1f32; 100];
+        let mut acc = EnvelopeAccumulator::new(sr, 10.0, 20.0);
+        for chunk in x.chunks(7) {
+            acc.push(chunk);
+        }
+        let (env, hop) = acc.finish();
+        // 帧起点 0,20,40,60,80
+        assert_eq!(env.len(), 5);
+        assert!((hop - 20.0).abs() < 1e-3);
     }
 
     #[test]

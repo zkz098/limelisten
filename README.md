@@ -22,6 +22,9 @@
 - [Rust](https://rustup.rs/) (1.80+ 推荐)
 - Linux 构建依赖：`libasound2-dev`, `libfontconfig1-dev`, `libxkbcommon-dev`
 
+> 老显卡 / 低功耗一体机若遇到启动黑屏或 OpenGL 驱动报错，可设置环境变量
+> `SLINT_BACKEND=winit-software` 强制使用软件渲染（包内已内置该回退）。
+
 ### 开发与构建
 本项目使用内置的 `xtask` 作为统一工作流工具：
 

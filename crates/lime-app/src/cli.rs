@@ -3,8 +3,8 @@
 use crate::paths;
 use anyhow::{anyhow, Result};
 use lime_analyze::{
-    build_chapters, detect_chimes, detect_structure, energy_envelope, AnalyzeParams, Chime,
-    GapKind, Structure,
+    build_chapters, detect_chimes_from_envelopes, detect_structure, AnalyzeParams,
+    BandEnvelopeAccumulator, Chime, EnvelopeAccumulator, GapKind, Structure,
 };
 use lime_asr::{group_sentences, WhisperCli};
 use lime_audio::resample::LinearResampler;
@@ -29,86 +29,184 @@ pub fn wav_16k_path(audio: &Path) -> PathBuf {
     paths::cache_dir().join(format!("{}.16k.wav", paths::cache_key(audio)))
 }
 
-/// 解码整文件为**原生采样率单声道**。
-///
-/// 返回的样本常驻内存（15 分钟 48k 素材约 170 MB），仅供需要完整波形的
-/// 一次性分析/转写使用；调用方用完请尽快 drop，**不要**长期持有。
-fn decode_mono(path: &Path) -> Result<(Vec<f32>, AudioInfo)> {
+/// 单遍流式分析：解码 → 单声道 → 同步计算包络/叮咚/数字静音，
+/// 需要时顺手写 16 kHz 转写输入。内存只与解码块和包络有关，不随音频时长增长。
+fn analyze_streaming(
+    path: &Path,
+    export_wav: Option<&Path>,
+    mut progress: impl FnMut(&str),
+) -> Result<AnalysisCore> {
     let info = lime_audio::probe(path)?;
+    let params = AnalyzeParams::default();
+    progress("解码音频…");
+
     let mut dec = lime_audio::decode::Decoder::open(path)?;
-    let channels = dec.channels;
-    let mut mono: Vec<f32> = Vec::with_capacity(info.duration_ms as usize * 8);
-    while let Some(buf) = dec.next_packet()? {
-        if channels <= 1 {
-            mono.extend_from_slice(buf);
+    let channels = dec.channels.max(1);
+    let sr = info.sample_rate;
+
+    let mut energy = EnvelopeAccumulator::new(sr, params.frame_ms, params.hop_ms);
+    // 叮咚检测固定用 20 ms / 5 ms；默认参数下直接复用能量包络，不重复算一遍。
+    let reuse_energy = (params.frame_ms - 20.0).abs() < 1e-3 && (params.hop_ms - 5.0).abs() < 1e-3;
+    let mut chime_rms = (!reuse_energy).then(|| EnvelopeAccumulator::new(sr, 20.0, 5.0));
+    let mut ding = BandEnvelopeAccumulator::new(sr, params.chime.ding_hz, &params.chime);
+    let mut dong = BandEnvelopeAccumulator::new(sr, params.chime.dong_hz, &params.chime);
+    let mut silence = ZeroSilenceTracker::new(sr, 500);
+
+    let mut sink: Option<(Resample16k, PathBuf)> = match export_wav {
+        Some(p) => match Resample16k::new(p, sr) {
+            Ok(s) => Some((s, p.to_path_buf())),
+            Err(e) => {
+                eprintln!("[limelisten] 16 kHz 转写输入导出失败（转写时将重试）: {e}");
+                let _ = std::fs::remove_file(p);
+                None
+            }
+        },
+        None => None,
+    };
+
+    let mut mono = Vec::new();
+    loop {
+        let buf = match dec.next_packet() {
+            Ok(Some(buf)) => buf,
+            Ok(None) => break,
+            Err(e) => {
+                // 半截 16k WAV 会被后续转写当成有效缓存，必须清掉
+                if let Some((_, p)) = sink.take() {
+                    let _ = std::fs::remove_file(p);
+                }
+                return Err(e.into());
+            }
+        };
+        let samples: &[f32] = if channels <= 1 {
+            buf
         } else {
+            mono.clear();
+            mono.reserve(buf.len() / channels + 1);
             for frame in buf.chunks(channels) {
                 mono.push(frame.iter().sum::<f32>() / channels as f32);
             }
+            &mono
+        };
+
+        energy.push(samples);
+        if let Some(acc) = chime_rms.as_mut() {
+            acc.push(samples);
+        }
+        ding.push(samples);
+        dong.push(samples);
+        silence.push(samples);
+
+        let mut sink_err = None;
+        if let Some((w, _)) = sink.as_mut() {
+            if let Err(e) = w.push(samples) {
+                sink_err = Some(e);
+            }
+        }
+        if let Some(e) = sink_err {
+            eprintln!("[limelisten] 16 kHz 转写输入导出失败（转写时将重试）: {e}");
+            if let Some((_, p)) = sink.take() {
+                let _ = std::fs::remove_file(p);
+            }
         }
     }
-    Ok((mono, info))
-}
 
-/// 解码一次 → 静音结构 + 叮咚 + 两级章节，并把整段单声道一并返回。
-///
-/// 返回单声道是为了让转写复用这次解码（Whisper 需要 16 kHz 音频），
-/// 从而**避免重复解码**。样本较大，调用方应尽快写盘/转写并释放。
-pub fn analyze_with_mono(
-    path: &Path,
-    mut progress: impl FnMut(&str),
-) -> Result<(AnalysisCore, Vec<f32>)> {
-    progress("解码音频…");
-    let (mono, info) = decode_mono(path)?;
-    let params = AnalyzeParams::default();
+    if let Some((w, p)) = sink.take() {
+        if let Err(e) = w.finish() {
+            eprintln!("[limelisten] 16 kHz 转写输入导出失败（转写时将重试）: {e}");
+            let _ = std::fs::remove_file(p);
+        }
+    }
 
     progress("检测静音结构…");
-    let env = energy_envelope(&mono, info.sample_rate, &params);
-    let mut structure = detect_structure(&env, info.sample_rate, &params);
-    structure.has_digital_silence =
-        !lime_analyze::digital_silence_spans(&mono, info.sample_rate, 500).is_empty();
+    let (energy_env, energy_hop_ms) = energy.finish();
+    let mut structure = detect_structure(&energy_env, sr, &params);
+    structure.has_digital_silence = silence.finish();
 
     progress("分析音频分段…");
-    let chimes = detect_chimes(&mono, info.sample_rate, &params.chime);
+    let chime_rms_env = chime_rms.map(|acc| acc.finish());
+    let (rms, rms_hop): (&[f32], f32) = match chime_rms_env.as_ref() {
+        Some((env, hop)) => (env, *hop),
+        None => (&energy_env, energy_hop_ms),
+    };
+    let (ding_env, ding_ms) = ding.finish();
+    let (dong_env, dong_ms) = dong.finish();
+    let chimes = detect_chimes_from_envelopes(
+        rms,
+        rms_hop,
+        &ding_env,
+        ding_ms,
+        &dong_env,
+        dong_ms,
+        &params.chime,
+    );
 
     progress("构建章节…");
     let chapters = build_chapters(&structure, &[], &chimes, &params);
 
-    Ok((
-        AnalysisCore {
-            path: path.to_path_buf(),
-            info,
-            structure,
-            chimes,
-            chapters,
-        },
-        mono,
-    ))
+    Ok(AnalysisCore {
+        path: path.to_path_buf(),
+        info,
+        structure,
+        chimes,
+        chapters,
+    })
 }
 
-/// 只做切分：整段单声道在函数返回前即被释放，不常驻内存。
-/// 供 `--analyze` / `--assert` 等诊断路径使用。
+/// 只做切分：供 `--analyze` / `--assert` 等诊断路径使用。
 pub fn analyze(path: &Path, progress: impl FnMut(&str)) -> Result<AnalysisCore> {
-    let (core, mono) = analyze_with_mono(path, progress)?;
-    drop(mono);
-    Ok(core)
+    analyze_streaming(path, None, progress)
 }
 
 /// 切分并顺手把 16 kHz 转写输入写进缓存：后续「转写」无需二次解码。
 /// GUI 打开文件即调用它（GUI 的核心用途就是逐词字幕，故值得提前生成）。
 pub fn analyze_and_export_wav(path: &Path, progress: impl FnMut(&str)) -> Result<AnalysisCore> {
-    let (core, mono) = analyze_with_mono(path, progress)?;
-    let wav = wav_16k_path(&core.path);
-    if !wav.is_file() {
-        // 只是为了给转写省一次解码，失败不应连带切分一起失败：
-        // 删掉半成品，转写阶段会用 export_16k_wav 重新生成。
-        if let Err(e) = dump_16k_wav(&mono, core.info.sample_rate, &wav) {
-            eprintln!("[limelisten] 16 kHz 转写输入导出失败（转写时将重试）: {e}");
-            let _ = std::fs::remove_file(&wav);
+    let wav = wav_16k_path(path);
+    let export = (!wav.is_file()).then_some(wav.as_path());
+    analyze_streaming(path, export, progress)
+}
+
+/// 流式数字静音检测：只记录是否出现过 ≥min_ms 的连续零值段，不保留整段样本。
+struct ZeroSilenceTracker {
+    min_len: usize,
+    pos: usize,
+    run_start: Option<usize>,
+    found: bool,
+}
+
+impl ZeroSilenceTracker {
+    fn new(sample_rate: u32, min_ms: u64) -> Self {
+        let min_len = ((min_ms as f64 / 1000.0) * sample_rate as f64) as usize;
+        Self {
+            min_len: min_len.max(1),
+            pos: 0,
+            run_start: None,
+            found: false,
         }
     }
-    drop(mono);
-    Ok(core)
+
+    fn push(&mut self, samples: &[f32]) {
+        for &s in samples {
+            if s == 0.0 {
+                if self.run_start.is_none() {
+                    self.run_start = Some(self.pos);
+                }
+            } else if let Some(start) = self.run_start.take() {
+                if self.pos - start >= self.min_len {
+                    self.found = true;
+                }
+            }
+            self.pos += 1;
+        }
+    }
+
+    fn finish(&mut self) -> bool {
+        if let Some(start) = self.run_start.take() {
+            if self.pos - start >= self.min_len {
+                self.found = true;
+            }
+        }
+        self.found
+    }
 }
 
 /// 把原生采样率单声道样本流式转成 16 kHz WAV 的写入器。
@@ -1172,5 +1270,74 @@ mod tests {
 
         let _ = std::fs::remove_file(&src);
         let _ = std::fs::remove_file(&dst);
+    }
+
+    /// 切分时顺手写出的 16 kHz WAV 必须完整、格式正确（转写阶段直接复用）。
+    #[test]
+    fn streaming_analysis_exports_valid_16k_wav() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("lime_export_analyze_{}.wav", std::process::id()));
+        let sr = 48_000u32;
+        let x: Vec<f32> = (0..sr as usize * 2)
+            .map(|i| 0.2 * (2.0 * std::f32::consts::PI * 440.0 * i as f32 / sr as f32).sin())
+            .collect();
+        lime_audio::render::write_wav(&src, &x, 1, sr).expect("write src");
+        let wav = wav_16k_path(&src);
+        let _ = std::fs::remove_file(&wav);
+
+        let _core = analyze_and_export_wav(&src, |_| {}).expect("analyze");
+        assert!(wav.is_file(), "应生成 16k 转写缓存");
+        let info = lime_audio::probe(&wav).expect("probe 16k");
+        assert_eq!(info.sample_rate, 16_000);
+        assert_eq!(info.channels, 1);
+        assert!((info.duration_ms as i64 - 2_000).abs() < 50);
+
+        let _ = std::fs::remove_file(&src);
+        let _ = std::fs::remove_file(&wav);
+    }
+
+    /// 流式分析必须与「整段解码 + 包络 + 叮咚」的旧路径得到同样的结构与章节。
+    #[test]
+    fn streaming_analysis_matches_full_decode() {
+        let dir = std::env::temp_dir();
+        let src = dir.join(format!("lime_stream_analyze_{}.wav", std::process::id()));
+        let sr = 48_000u32;
+        let mut x = vec![0.0f32; sr as usize * 4];
+        for (i, v) in x.iter_mut().enumerate() {
+            let t = i as f32 / sr as f32;
+            if (0.5..1.5).contains(&t) || (2.5..3.8).contains(&t) {
+                *v = 0.25 * (2.0 * std::f32::consts::PI * 440.0 * t).sin();
+            }
+        }
+        lime_audio::render::write_wav(&src, &x, 1, sr).expect("write src");
+
+        let core = analyze(&src, |_| {}).expect("streaming analyze");
+
+        let info = lime_audio::probe(&src).unwrap();
+        let mut dec = lime_audio::decode::Decoder::open(&src).unwrap();
+        let mut mono = Vec::new();
+        while let Some(buf) = dec.next_packet().unwrap() {
+            mono.extend_from_slice(buf);
+        }
+        let params = AnalyzeParams::default();
+        let env = lime_analyze::energy_envelope(&mono, info.sample_rate, &params);
+        let mut expected = detect_structure(&env, info.sample_rate, &params);
+        expected.has_digital_silence =
+            !lime_analyze::digital_silence_spans(&mono, info.sample_rate, 500).is_empty();
+        assert!(expected.has_digital_silence, "测试素材应包含数字静音");
+
+        assert_eq!(core.structure.speech, expected.speech);
+        assert_eq!(core.structure.gaps, expected.gaps);
+        assert_eq!(core.structure.duration_ms, expected.duration_ms);
+        assert!(core.structure.has_digital_silence);
+
+        let chimes = lime_analyze::detect_chimes(&mono, info.sample_rate, &params.chime);
+        assert_eq!(core.chimes, chimes);
+        assert_eq!(
+            core.chapters,
+            lime_analyze::build_chapters(&expected, &[], &chimes, &params)
+        );
+
+        let _ = std::fs::remove_file(&src);
     }
 }

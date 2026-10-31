@@ -279,7 +279,6 @@ where
     let mut cur_pos = 0usize;
     let mut local_gen = 0u64;
     let sh = shared.clone();
-    let err_sh = shared.clone();
     let stream = device
         .build_output_stream(
             config,
@@ -311,7 +310,11 @@ where
                                 for d in data[i..].iter_mut() {
                                     *d = T::from_sample(0.0f32);
                                 }
-                                sh.underruns.fetch_add(1, Relaxed);
+                                // 暂停/播完后队列本来就是空的，这不是欠载；
+                                // 否则 UI 上的 underrun 会一直涨，并导致无意义重绘。
+                                if sh.playing.load(Relaxed) {
+                                    sh.underruns.fetch_add(1, Relaxed);
+                                }
                                 break;
                             }
                         }
@@ -329,7 +332,6 @@ where
             None,
         )
         .map_err(|e| Error::Decode(format!("build_output_stream: {e}")))?;
-    let _ = err_sh;
     Ok(stream)
 }
 
@@ -379,6 +381,7 @@ fn worker_loop(
     let mut norm: Vec<f32> = Vec::new();
     let mut resampled: Vec<f32> = Vec::new();
     let mut free: Vec<Vec<f32>> = Vec::new(); // 回调回收的输出缓冲池
+    let mut cmd_buf: Vec<Cmd> = Vec::with_capacity(8);
 
     loop {
         // 回收回调用完的输出缓冲（池化复用）
@@ -389,7 +392,19 @@ fn worker_loop(
         }
 
         // ---- 命令 ----
-        while let Ok(c) = cmd.try_recv() {
+        // 暂停/播完时没有数据要产出，阻塞等命令即可；此前的 `sleep(4ms)` 会在
+        // 后台每秒唤醒 250 次，低功耗机器上既费电又阻止 CPU 进入深度休眠。
+        cmd_buf.clear();
+        if playing {
+            cmd_buf.extend(cmd.try_iter());
+        } else {
+            match cmd.recv() {
+                Ok(c) => cmd_buf.push(c),
+                Err(_) => return Ok(()),
+            }
+            cmd_buf.extend(cmd.try_iter());
+        }
+        for c in cmd_buf.drain(..) {
             match c {
                 Cmd::Quit => {
                     shared.playing.store(false, Relaxed);
@@ -440,6 +455,11 @@ fn worker_loop(
             }
         }
 
+        if !playing {
+            // 回到循环顶部阻塞等命令；跳转/循环等状态已记录，恢复播放时再生效。
+            continue;
+        }
+
         // ---- 等待队列被回调清空（跳转生效的同步点）----
         if gen != shared.ack_gen.load(Relaxed) {
             std::thread::sleep(Duration::from_millis(2));
@@ -463,11 +483,6 @@ fn worker_loop(
             shared.pos_ms.store(target, Relaxed);
             shared.eof.store(false, Relaxed);
             shared.finished.store(false, Relaxed);
-        }
-
-        if !playing {
-            std::thread::sleep(Duration::from_millis(4));
-            continue;
         }
 
         // ---- 解码一块（复用 src_block）----

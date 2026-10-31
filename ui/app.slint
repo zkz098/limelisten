@@ -1,4 +1,4 @@
-import { VerticalBox, HorizontalBox, Button, Slider, ScrollView, TextEdit, LineEdit } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, Button, Slider, ScrollView, ListView, TextEdit, LineEdit } from "std-widgets.slint";
 import "./assets/remixicon.ttf";
 
 global Ri {
@@ -113,13 +113,15 @@ component AudioVisualizer inherits HorizontalLayout {
     width: 18px;
     height: 16px;
 
+    // 只用静态高度 + 播放状态切换动画，避免 animation-tick() 在播放期间
+    // 让整个窗口以 60fps 持续重绘（4K 大屏 + 弱核显上开销很可观）。
     Rectangle {
         width: 3px;
         border-radius: 1.5px;
         background: root.playing ? #2563eb : #94a3b8;
         y: (parent.height - self.height) / 2;
-        height: root.playing ? (4px + abs(sin(animation-tick() / 0.35s * 360deg)) * 10px) : 4px;
-        animate height { duration: 60ms; }
+        height: root.playing ? 13px : 4px;
+        animate height { duration: 180ms; easing: ease-out; }
         animate background { duration: 150ms; }
     }
     Rectangle {
@@ -127,8 +129,8 @@ component AudioVisualizer inherits HorizontalLayout {
         border-radius: 1.5px;
         background: root.playing ? #3b82f6 : #94a3b8;
         y: (parent.height - self.height) / 2;
-        height: root.playing ? (4px + abs(sin((animation-tick() + 120ms) / 0.28s * 360deg)) * 11px) : 6px;
-        animate height { duration: 60ms; }
+        height: root.playing ? 15px : 6px;
+        animate height { duration: 180ms; easing: ease-out; }
         animate background { duration: 150ms; }
     }
     Rectangle {
@@ -136,8 +138,8 @@ component AudioVisualizer inherits HorizontalLayout {
         border-radius: 1.5px;
         background: root.playing ? #60a5fa : #94a3b8;
         y: (parent.height - self.height) / 2;
-        height: root.playing ? (4px + abs(sin((animation-tick() + 240ms) / 0.42s * 360deg)) * 9px) : 4px;
-        animate height { duration: 60ms; }
+        height: root.playing ? 10px : 4px;
+        animate height { duration: 180ms; easing: ease-out; }
         animate background { duration: 150ms; }
     }
     Rectangle {
@@ -145,8 +147,8 @@ component AudioVisualizer inherits HorizontalLayout {
         border-radius: 1.5px;
         background: root.playing ? #2563eb : #94a3b8;
         y: (parent.height - self.height) / 2;
-        height: root.playing ? (4px + abs(sin((animation-tick() + 60ms) / 0.31s * 360deg)) * 10px) : 5px;
-        animate height { duration: 60ms; }
+        height: root.playing ? 12px : 5px;
+        animate height { duration: 180ms; easing: ease-out; }
         animate background { duration: 150ms; }
     }
 }
@@ -1027,13 +1029,12 @@ export component MainWindow inherits Window {
                         vertical-stretch: 1;
                         spacing: 8px;
 
-                        // 列表本体
-                        ScrollView {
-                            VerticalLayout {
-                                width: parent.width;
-                                spacing: 2px;
-                                for row in root.chapters : Rectangle {
-                                    height: row.level == 0 ? 34px : 28px;
+                        // 列表本体（ListView 只实例化可见行，媒体库大时不会一次建满）
+                        ListView {
+                            vertical-stretch: 1;
+                            for row in root.chapters : Rectangle {
+                                    width: parent.width;
+                                    height: row.level == 0 ? 36px : 30px;
                                     background: row.chapter-index == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
                                     border-radius: 5px;
                                     animate background { duration: 120ms; easing: ease-out; }
@@ -1134,7 +1135,6 @@ export component MainWindow inherits Window {
                                         }
                                     }
                                 }
-                            }
                         }
 
                         // 章节微调工具卡片 (P1-3)
@@ -1211,14 +1211,12 @@ export component MainWindow inherits Window {
                         }
                     }
 
-                    // TAB 1: 媒体库列表
-                    if root.sidebar-tab == 1 : ScrollView {
+                    // TAB 1: 媒体库列表（ListView 虚拟化，文件再多也只建可见行）
+                    if root.sidebar-tab == 1 : ListView {
                         vertical-stretch: 1;
-                        VerticalLayout {
-                            width: parent.width;
-                            spacing: 4px;
-                            for m[i] in root.media-list : Rectangle {
-                                height: 48px;
+                        for m[i] in root.media-list : Rectangle {
+                                width: parent.width;
+                                height: 52px;
                                 background: i == root.current-media-idx ? #eff6ff : (media-touch.has-hover ? #f8fafc : transparent);
                                 border-radius: 6px;
                                 border-width: 1px;
@@ -1286,7 +1284,6 @@ export component MainWindow inherits Window {
                                     clicked => { root.select-media(i); }
                                 }
                             }
-                        }
                     }
                 }
             }

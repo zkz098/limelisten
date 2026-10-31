@@ -19,7 +19,7 @@ use lime_core::{
     find_accompanying_audio, find_matching_limed, normalize_chapters, Chapter, ChapterSource,
     ExerciseParser, ExerciseQuestion, LimedFile, LimedMeta, MaterialExercise, Sentence, Word,
 };
-use lime_store::{MediaItem, Store};
+use lime_store::{MediaItem, MediaUpsert, ProgressSaver, Store};
 use slint::{ComponentHandle, ModelRc, VecModel};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -68,6 +68,17 @@ enum Msg {
         success: bool,
         msg: String,
     },
+    FolderScanned(Vec<ScannedAudio>),
+}
+
+/// 文件夹扫描结果（后台线程产出；入库由 UI 线程单事务完成）。
+struct ScannedAudio {
+    path: PathBuf,
+    size: i64,
+    mtime: i64,
+    duration_ms: i64,
+    sample_rate: i64,
+    channels: i64,
 }
 
 struct GuiState {
@@ -105,6 +116,10 @@ struct GuiState {
     active_material_ordinal: u32,
     /// 当前播放处于的小题题号
     active_question_num: Option<u32>,
+    /// 播放进度异步写线程
+    progress_saver: Option<ProgressSaver>,
+    /// whisper-cli 可用性检查缓存（路径 + mtime + 结果），避免下载进度回调反复起子进程
+    whisper_check: Option<(PathBuf, Option<std::time::SystemTime>, Result<(), String>)>,
 }
 
 impl Default for GuiState {
@@ -135,6 +150,8 @@ impl Default for GuiState {
             exercise_submitted: false,
             active_material_ordinal: 1,
             active_question_num: None,
+            progress_saver: None,
+            whisper_check: None,
         }
     }
 }
@@ -277,21 +294,37 @@ fn check_whisper_runnable(exe: &Path) -> Result<(), &'static str> {
     }
 }
 
-fn refresh_whisper_ui(ui: &MainWindow, state: &GuiState) {
+fn whisper_runnable_cached(state: &mut GuiState, exe: &Path) -> Result<(), String> {
+    let mtime = std::fs::metadata(exe).and_then(|m| m.modified()).ok();
+    if let Some((cached_exe, cached_mtime, result)) = &state.whisper_check {
+        if cached_exe == exe && *cached_mtime == mtime {
+            return result.clone();
+        }
+    }
+    #[cfg(windows)]
+    let result = check_whisper_runnable(exe).map_err(|m| m.to_string());
+    #[cfg(not(windows))]
+    let result: Result<(), String> = Ok(());
+    state.whisper_check = Some((exe.to_path_buf(), mtime, result.clone()));
+    result
+}
+
+fn refresh_whisper_ui(ui: &MainWindow, state: &mut GuiState) {
     let rows = get_whisper_build_rows(state);
     ui.set_whisper_builds(ModelRc::new(VecModel::from(rows)));
     match paths::find_whisper_exe() {
-        Some(p) => {
-            #[cfg(windows)]
-            if let Err(msg) = check_whisper_runnable(&p) {
+        Some(p) => match whisper_runnable_cached(state, &p) {
+            Err(msg) => {
                 ui.set_whisper_installed(false);
                 ui.set_whisper_status(format!("{msg} · 需安装 VC_redist.x64").into());
-                return;
             }
-            ui.set_whisper_installed(true);
-            ui.set_whisper_status(format!("已就绪 · {}", p.display()).into());
-        }
+            Ok(()) => {
+                ui.set_whisper_installed(true);
+                ui.set_whisper_status(format!("已就绪 · {}", p.display()).into());
+            }
+        },
         None => {
+            state.whisper_check = None;
             ui.set_whisper_installed(false);
             ui.set_whisper_status("未安装".into());
         }
@@ -751,6 +784,19 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         auto_pause: true,
         ..Default::default()
     }));
+    state.borrow_mut().progress_saver = Some(ProgressSaver::spawn(&db_path)?);
+
+    // 启动后在后台按 LRU 清理过大的转写中间缓存，不阻塞首屏。
+    std::thread::spawn(|| match paths::prune_cache() {
+        Ok(removed) if removed > 0 => {
+            eprintln!(
+                "[limelisten] 已清理旧缓存 {:.1} MB",
+                removed as f64 / 1_048_576.0
+            );
+        }
+        Ok(_) => {}
+        Err(e) => eprintln!("[limelisten] 缓存清理失败: {e}"),
+    });
     let (tx, rx): (Sender<Msg>, Receiver<Msg>) = unbounded();
     let last_sentence = Rc::new(Cell::new(usize::MAX));
 
@@ -762,7 +808,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     // 启动时刷新媒体库列表、模型列表与转写引擎状态
     refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
     refresh_bench_models_ui(&ui, &state.borrow());
-    refresh_whisper_ui(&ui, &state.borrow());
+    refresh_whisper_ui(&ui, &mut state.borrow_mut());
 
     if let Some(path) = open {
         load_or_analyze_media(path, &ui, &state, &store, &tx, &last_sentence);
@@ -793,67 +839,22 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     // ---------------- 扫描文件夹批量入库 ----------------
     {
         let ui_weak = ui.as_weak();
-        let state = state.clone();
-        let store = store.clone();
         let tx = tx.clone();
-        let last_sentence = Rc::clone(&last_sentence);
         ui.on_open_folder(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let Some(dir) = rfd::FileDialog::new().pick_folder() else {
                 return;
             };
 
-            let mut found = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&dir) {
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    if p.is_file() {
-                        let ext = p
-                            .extension()
-                            .and_then(|s| s.to_str())
-                            .unwrap_or("")
-                            .to_ascii_lowercase();
-                        if matches!(
-                            ext.as_str(),
-                            "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus"
-                        ) {
-                            found.push(p);
-                        }
-                    }
-                }
-            }
-            if found.is_empty() {
-                ui.set_status("未找到音频文件".into());
-                return;
-            }
-            found.sort();
-
-            for p in &found {
-                let size = std::fs::metadata(p).map(|m| m.len() as i64).unwrap_or(0);
-                let mtime = std::fs::metadata(p)
-                    .ok()
-                    .and_then(|m| m.modified().ok())
-                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                    .map(|d| d.as_secs() as i64)
-                    .unwrap_or(0);
-                let dur = lime_audio::probe(p)
-                    .map(|i| i.duration_ms as i64)
-                    .unwrap_or(0);
-                let _ =
-                    store
-                        .borrow()
-                        .upsert_media(&p.to_string_lossy(), size, mtime, dur, 44100, 2);
-            }
-
-            refresh_media_list(&ui, &store.borrow(), &mut state.borrow_mut());
-            ui.set_sidebar_tab(1); // 切到媒体库 tab
-            ui.set_status(format!("已导入 {} 个音频", found.len()).into());
-
-            if state.borrow().path.is_none() {
-                if let Some(first) = found.into_iter().next() {
-                    load_or_analyze_media(first, &ui, &state, &store, &tx, &last_sentence);
-                }
-            }
+            // 文件探测（每个文件要开一次）和 UI 线程无关，放到后台；
+            // 扫完回到 UI 线程用单事务入库，避免 N 个文件 N 次 fsync。
+            ui.set_status("正在扫描文件夹…".into());
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                lime_asr::set_current_thread_below_normal();
+                let files = scan_audio_folder(&dir);
+                let _ = tx.send(Msg::FolderScanned(files));
+            });
         });
     }
 
@@ -1043,6 +1044,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
+        let store = store.clone();
         ui.on_play_pause(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
             let need_engine = state.borrow().engine.is_none();
@@ -1074,8 +1076,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 eng.set_speed(st.speed);
                 eng.set_loop(a, b, st.loop_count);
                 eng.set_stop_at(if st.auto_pause && cur >= 0 { b } else { 0 });
+                let was_playing = eng.shared().playing();
                 eng.toggle();
-                ui.set_playing(eng.shared().playing());
+                // toggle 只是投递命令，shared.playing 要等 worker 处理后才翻转；
+                // 这里按“切换前是否在播”判断，避免暂停时漏存进度/按钮状态闪回。
+                if was_playing {
+                    queue_current_progress(&ui, &st, &store.borrow(), eng.shared().pos_ms());
+                }
+                ui.set_playing(!was_playing);
             }
         });
     }
@@ -1540,9 +1548,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         let state = state.clone();
         ui.on_open_bench_modal(move || {
             let Some(ui) = ui_weak.upgrade() else { return };
-            let st = state.borrow();
+            let mut st = state.borrow_mut();
             refresh_bench_models_ui(&ui, &st);
-            refresh_whisper_ui(&ui, &st);
+            refresh_whisper_ui(&ui, &mut st);
             ui.set_show_bench_modal(true);
         });
     }
@@ -2056,16 +2064,20 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         });
     }
 
-    // ---------------- 50ms 定时器 ----------------
+    // ---------------- UI 定时器（播放中 50ms，空闲 200ms） ----------------
     {
         let ui_weak = ui.as_weak();
         let state = state.clone();
         let store = store.clone();
+        let tx = tx.clone();
         let last_sentence = Rc::clone(&last_sentence);
-        let timer = slint::Timer::default();
+        let last_underruns = Rc::new(Cell::new(u64::MAX));
+        let interval_ms = Rc::new(Cell::new(200u64));
+        let timer = Rc::new(slint::Timer::default());
+        let timer_weak = Rc::downgrade(&timer);
         timer.start(
             slint::TimerMode::Repeated,
-            std::time::Duration::from_millis(50),
+            std::time::Duration::from_millis(200),
             move || {
                 let Some(ui) = ui_weak.upgrade() else { return };
 
@@ -2124,7 +2136,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         } => {
                             let mut st = state.borrow_mut();
                             st.whisper_downloading = Some((id, progress, status_text));
-                            refresh_whisper_ui(&ui, &st);
+                            refresh_whisper_ui(&ui, &mut st);
                         }
                         Msg::WhisperDownloadDone {
                             id: _,
@@ -2134,10 +2146,54 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                             let mut st = state.borrow_mut();
                             st.whisper_downloading = None;
                             st.is_downloading_cli.store(false, Ordering::Relaxed);
-                            refresh_whisper_ui(&ui, &st);
+                            refresh_whisper_ui(&ui, &mut st);
                             ui.set_status(msg.into());
                             if success {
                                 ui.set_bench_summary("转写引擎已就绪".into());
+                            }
+                        }
+                        Msg::FolderScanned(files) => {
+                            if files.is_empty() {
+                                ui.set_status("未找到音频文件".into());
+                            } else {
+                                let count = files.len();
+                                let items: Vec<MediaUpsert> = files
+                                    .iter()
+                                    .map(|f| MediaUpsert {
+                                        path: f.path.to_string_lossy().into_owned(),
+                                        size: f.size,
+                                        mtime: f.mtime,
+                                        duration_ms: f.duration_ms,
+                                        sample_rate: f.sample_rate,
+                                        channels: f.channels,
+                                    })
+                                    .collect();
+                                match store.borrow().upsert_media_batch(&items) {
+                                    Ok(()) => {
+                                        refresh_media_list(
+                                            &ui,
+                                            &store.borrow(),
+                                            &mut state.borrow_mut(),
+                                        );
+                                        ui.set_sidebar_tab(1);
+                                        ui.set_status(format!("已导入 {count} 个音频").into());
+                                        if state.borrow().path.is_none() {
+                                            if let Some(first) = files.into_iter().next() {
+                                                load_or_analyze_media(
+                                                    first.path,
+                                                    &ui,
+                                                    &state,
+                                                    &store,
+                                                    &tx,
+                                                    &last_sentence,
+                                                );
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        ui.set_status(format!("入库失败: {e}").into());
+                                    }
+                                }
                             }
                         }
                         Msg::TranscribeDone {
@@ -2221,6 +2277,23 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     }
                 }
 
+                // 只有播放中才需要 20fps 的位置/字幕刷新；空闲 5fps 足够，
+                // 低端机上空闲唤醒次数直接降到原来的 1/4。
+                let playing_now = {
+                    let st = state.borrow();
+                    st.engine
+                        .as_ref()
+                        .map(|e| e.shared().playing())
+                        .unwrap_or(false)
+                };
+                let desired_ms = if playing_now { 50u64 } else { 200u64 };
+                if interval_ms.get() != desired_ms {
+                    interval_ms.set(desired_ms);
+                    if let Some(t) = timer_weak.upgrade() {
+                        t.set_interval(std::time::Duration::from_millis(desired_ms));
+                    }
+                }
+
                 // 引擎进度
                 let mut pos = ui.get_position() as u64;
                 {
@@ -2230,7 +2303,11 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         pos = sh.pos_ms();
                         ui.set_position(pos as f32);
                         ui.set_playing(sh.playing());
-                        ui.set_underruns(format!("underrun {}", sh.underruns()).into());
+                        let underruns = sh.underruns();
+                        if last_underruns.get() != underruns {
+                            last_underruns.set(underruns);
+                            ui.set_underruns(format!("underrun {underruns}").into());
+                        }
                         if sh.take_reached_stop() {
                             let cur = ui.get_current();
                             let next = match st.core.as_ref() {
@@ -2249,8 +2326,18 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                                 }
                                 ui.set_status("已暂停".into());
                             }
-                            if let (Some(mid), true) = (st.media_id, cur >= 0) {
-                                let _ = store.borrow().bump_stat(mid, (cur + 1) as i64, false);
+                            if let Some(mid) = st.media_id {
+                                if cur >= 0 {
+                                    let _ = store.borrow().bump_stat(mid, (cur + 1) as i64, false);
+                                }
+                                // 自动暂停点直接落一次进度，避免等下一次周期保存
+                                queue_progress(
+                                    &st,
+                                    &store.borrow(),
+                                    mid,
+                                    pos,
+                                    (cur.max(0) + 1) as u32,
+                                );
                             }
                         }
                     }
@@ -2262,15 +2349,15 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     format!("{} / {}", crate::cli::fmt_ms(pos), crate::cli::fmt_ms(dur)).into(),
                 );
 
-                // 定期保存断点续播进度 (每 1.5 秒保存一次)
-                {
+                // 播放中每 3 秒保存一次断点；暂停/切歌/退出时另有即时保存。
+                // 不播放时完全不写盘，避免待机状态下每 1.5 秒一次无意义落盘。
+                if playing_now {
                     let mut st = state.borrow_mut();
                     if let Some(mid) = st.media_id {
-                        if st.last_progress_save.elapsed() > std::time::Duration::from_millis(1500)
-                        {
+                        if st.last_progress_save.elapsed() >= std::time::Duration::from_secs(3) {
                             st.last_progress_save = std::time::Instant::now();
                             let cur_ord = (ui.get_current().max(0) + 1) as u32;
-                            let _ = store.borrow().save_progress(mid, pos, cur_ord);
+                            queue_progress(&st, &store.borrow(), mid, pos, cur_ord);
                         }
                     }
                 }
@@ -2291,7 +2378,21 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         std::mem::forget(timer);
     }
 
-    ui.run()?;
+    let run_result = ui.run();
+
+    // 退出前保存最后一次进度，并等后台写线程把队列刷完（Drop 里 join）。
+    {
+        let st = state.borrow();
+        let pos = st
+            .engine
+            .as_ref()
+            .map(|e| e.shared().pos_ms())
+            .unwrap_or_else(|| ui.get_position().max(0.0).round() as u64);
+        queue_current_progress(&ui, &st, &store.borrow(), pos);
+    }
+    drop(state.borrow_mut().progress_saver.take());
+
+    run_result?;
     Ok(())
 }
 
@@ -2302,6 +2403,22 @@ fn apply_range(st: &GuiState, ui: &MainWindow, a: u64, b: u64) {
         eng.seek_ms(a);
     }
     ui.set_position(a as f32);
+}
+
+/// 投递一次进度保存：优先走后台写线程，绝不阻塞 UI。
+fn queue_progress(st: &GuiState, store: &Store, media_id: i64, pos_ms: u64, ord: u32) {
+    if let Some(saver) = st.progress_saver.as_ref() {
+        saver.save(media_id, pos_ms, ord);
+    } else {
+        let _ = store.save_progress(media_id, pos_ms, ord);
+    }
+}
+
+fn queue_current_progress(ui: &MainWindow, st: &GuiState, store: &Store, pos_ms: u64) {
+    if let Some(mid) = st.media_id {
+        let ord = (ui.get_current().max(0) + 1) as u32;
+        queue_progress(st, store, mid, pos_ms, ord);
+    }
 }
 
 fn load_or_analyze_media(
@@ -2328,6 +2445,17 @@ fn load_or_analyze_media(
     } else {
         path
     };
+
+    // 切歌前把上一首的进度落盘（此时 ui.current 仍指向上一首的章节）
+    {
+        let st = state.borrow();
+        let pos = st
+            .engine
+            .as_ref()
+            .map(|e| e.shared().pos_ms())
+            .unwrap_or_else(|| ui.get_position().max(0.0).round() as u64);
+        queue_current_progress(ui, &st, &store.borrow(), pos);
+    }
 
     let filename = file_label(&path);
     ui.set_current_track_title(filename.clone().into());
@@ -2393,110 +2521,114 @@ fn load_or_analyze_media(
 
     // ① 优先检查是否有符合同名 .limed 预切分转译缓存
     let mut cache_hit = false;
-    if let Some(limed_path) = find_matching_limed(&path, info.duration_ms, Some(size as u64)) {
-        if let Ok(limed) = LimedFile::load(&limed_path) {
-            cache_hit = true;
-            // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化；字幕要过转写指纹：
-            // 旧解码参数（如 -mc -1 的重复幻觉）产生的字幕不再展示；章节照常可用
-            let limed_stale = subtitle_cache_stale(Some(limed.meta.asr_fp.as_str()), false);
-            // 旧 `.limed` 字幕失效时，优先用 SQLite 里已用新管线转写好的字幕：
-            // 否则用户重新转写后，一重开文件又会被过期的 `.limed` 盖住。
-            let db_sents = if limed_stale {
-                media_id.and_then(|mid| {
-                    let st_ref = store.borrow();
-                    let fp = st_ref.load_analysis(mid).ok().flatten().map(|(_, fp)| fp);
-                    let sents = st_ref.load_sentences(mid).unwrap_or_default();
-                    (!sents.is_empty() && !subtitle_cache_stale(fp.as_deref(), true))
-                        .then_some(sents)
-                })
-            } else {
-                None
-            };
-            let from_db = limed_stale && db_sents.is_some();
-            let stale_subtitles = limed_stale && db_sents.is_none();
-            let sents = match db_sents {
-                Some(s) => s,
-                None if stale_subtitles => Vec::new(),
-                None => limed.sentences,
-            };
-            let merged = if sents.is_empty() {
-                canonical_chapters(&limed.chapters)
-            } else {
-                lime_analyze::merge_repeated_materials(&limed.chapters, &sents)
-            };
-            let chapters = save_and_reload_chapters(store, media_id, merged);
-            let limed_exercises = limed.exercises;
-            if let Some(mid) = media_id {
-                if stale_subtitles {
-                    let _ = store.borrow().clear_sentences(mid);
-                } else if !from_db {
+    if let Some((_limed_path, limed)) =
+        find_matching_limed(&path, info.duration_ms, Some(size as u64))
+    {
+        cache_hit = true;
+        // 外部工具改过的 `.limed` 也可能顺序错乱，统一规范化；字幕要过转写指纹：
+        // 旧解码参数（如 -mc -1 的重复幻觉）产生的字幕不再展示；章节照常可用
+        let limed_stale = subtitle_cache_stale(Some(limed.meta.asr_fp.as_str()), false);
+        // 旧 `.limed` 字幕失效时，优先用 SQLite 里已用新管线转写好的字幕：
+        // 否则用户重新转写后，一重开文件又会被过期的 `.limed` 盖住。
+        let db_sents = if limed_stale {
+            media_id.and_then(|mid| {
+                let st_ref = store.borrow();
+                let fp = st_ref.load_analysis(mid).ok().flatten().map(|(_, fp)| fp);
+                let sents = st_ref.load_sentences(mid).unwrap_or_default();
+                (!sents.is_empty() && !subtitle_cache_stale(fp.as_deref(), true)).then_some(sents)
+            })
+        } else {
+            None
+        };
+        let from_db = limed_stale && db_sents.is_some();
+        let stale_subtitles = limed_stale && db_sents.is_none();
+        let sents = match db_sents {
+            Some(s) => s,
+            None if stale_subtitles => Vec::new(),
+            None => limed.sentences,
+        };
+        let merged = if sents.is_empty() {
+            canonical_chapters(&limed.chapters)
+        } else {
+            lime_analyze::merge_repeated_materials(&limed.chapters, &sents)
+        };
+        let chapters = save_and_reload_chapters(store, media_id, merged);
+        let limed_exercises = limed.exercises;
+        let existing_exercises = media_id
+            .and_then(|mid| store.borrow().load_exercises(mid).ok())
+            .unwrap_or_default();
+        if let Some(mid) = media_id {
+            if stale_subtitles {
+                let _ = store.borrow().clear_sentences(mid);
+            } else if !from_db {
+                // 先比较：内容不变就不重写整份句/词表（长素材可能是上万行 INSERT）
+                let existing = store.borrow().load_sentences(mid).unwrap_or_default();
+                if existing != sents {
                     let _ = store.borrow().save_sentences(mid, &sents);
                 }
-                if !limed_exercises.is_empty() {
-                    let _ = store.borrow().save_exercises(mid, &limed_exercises);
-                }
             }
-            let exercises = if !limed_exercises.is_empty() {
-                limed_exercises
-            } else {
-                media_id
-                    .and_then(|mid| store.borrow().load_exercises(mid).ok())
-                    .unwrap_or_default()
-            };
-            let collapsed = state.borrow().collapsed_materials.clone();
-            set_chapter_rows(ui, &chapters, &collapsed);
-            ui.set_has_chapters(!chapters.is_empty());
-            ui.set_duration(info.duration_ms as f32);
-
-            ui.set_chime_info(chapters_summary(&chapters).into());
-
-            if !sents.is_empty() {
-                ui.set_has_subtitles(true);
-                ui.set_status(
-                    format!("已加载：{} 章节 · {} 句字幕", chapters.len(), sents.len()).into(),
-                );
-            } else {
-                ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
+            if !limed_exercises.is_empty() && existing_exercises != limed_exercises {
+                let _ = store.borrow().save_exercises(mid, &limed_exercises);
             }
+        }
+        let exercises = if !limed_exercises.is_empty() {
+            limed_exercises
+        } else {
+            existing_exercises
+        };
+        let collapsed = state.borrow().collapsed_materials.clone();
+        set_chapter_rows(ui, &chapters, &collapsed);
+        ui.set_has_chapters(!chapters.is_empty());
+        ui.set_duration(info.duration_ms as f32);
 
-            let (saved_pos, saved_ord) = if let Some(mid) = media_id {
-                store
-                    .borrow()
-                    .get_progress(mid)
-                    .unwrap_or(None)
-                    .unwrap_or((0, 0))
-            } else {
-                (0, 0)
-            };
+        ui.set_chime_info(chapters_summary(&chapters).into());
 
-            let mut st = state.borrow_mut();
-            st.core = Some(AnalysisCore {
-                path: path.clone(),
-                info,
-                structure: lime_analyze::Structure {
-                    speech: vec![],
-                    gaps: vec![],
-                    duration_ms: info.duration_ms,
-                    has_digital_silence: false,
-                },
-                chimes: vec![],
-                chapters: chapters.clone(),
-            });
-            st.sentences = sents;
-            st.exercises = exercises;
-            st.user_answers.clear();
-            st.exercise_submitted = false;
-            st.active_material_ordinal = 1;
-            st.active_question_num = None;
-            refresh_exercise_ui(ui, &st);
+        if !sents.is_empty() {
+            ui.set_has_subtitles(true);
+            ui.set_status(
+                format!("已加载：{} 章节 · {} 句字幕", chapters.len(), sents.len()).into(),
+            );
+        } else {
+            ui.set_status(format!("已加载：{} 章节", chapters.len()).into());
+        }
 
-            if saved_ord > 0 && (saved_ord as usize) <= chapters.len() {
-                let hidden = hidden_rows(&chapters, &collapsed);
-                ui.set_current(uncloak_current(&chapters, &hidden, (saved_ord as i32) - 1));
-            }
-            if saved_pos > 0 {
-                ui.set_position(saved_pos as f32);
-            }
+        let (saved_pos, saved_ord) = if let Some(mid) = media_id {
+            store
+                .borrow()
+                .get_progress(mid)
+                .unwrap_or(None)
+                .unwrap_or((0, 0))
+        } else {
+            (0, 0)
+        };
+
+        let mut st = state.borrow_mut();
+        st.core = Some(AnalysisCore {
+            path: path.clone(),
+            info,
+            structure: lime_analyze::Structure {
+                speech: vec![],
+                gaps: vec![],
+                duration_ms: info.duration_ms,
+                has_digital_silence: false,
+            },
+            chimes: vec![],
+            chapters: chapters.clone(),
+        });
+        st.sentences = sents;
+        st.exercises = exercises;
+        st.user_answers.clear();
+        st.exercise_submitted = false;
+        st.active_material_ordinal = 1;
+        st.active_question_num = None;
+        refresh_exercise_ui(ui, &st);
+
+        if saved_ord > 0 && (saved_ord as usize) <= chapters.len() {
+            let hidden = hidden_rows(&chapters, &collapsed);
+            ui.set_current(uncloak_current(&chapters, &hidden, (saved_ord as i32) - 1));
+        }
+        if saved_pos > 0 {
+            ui.set_position(saved_pos as f32);
         }
     }
 
@@ -2619,6 +2751,48 @@ fn subtitle_cache_stale(cached_fp: Option<&str>, full: bool) -> bool {
     }
 }
 
+/// 扫描文件夹里的音频并读取时长（后台线程执行，避免卡 UI）。
+fn scan_audio_folder(dir: &Path) -> Vec<ScannedAudio> {
+    let mut found = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let p = entry.path();
+            if !p.is_file() {
+                continue;
+            }
+            let ext = p
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            if !matches!(
+                ext.as_str(),
+                "mp3" | "wav" | "flac" | "ogg" | "m4a" | "aac" | "opus"
+            ) {
+                continue;
+            }
+            let size = std::fs::metadata(&p).map(|m| m.len() as i64).unwrap_or(0);
+            let mtime = std::fs::metadata(&p)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0);
+            let info = lime_audio::probe(&p).ok();
+            found.push(ScannedAudio {
+                path: p,
+                size,
+                mtime,
+                duration_ms: info.map(|i| i.duration_ms as i64).unwrap_or(0),
+                sample_rate: info.map(|i| i.sample_rate as i64).unwrap_or(44_100),
+                channels: info.map(|i| i.channels as i64).unwrap_or(2),
+            });
+        }
+    }
+    found.sort_by(|a, b| a.path.cmp(&b.path));
+    found
+}
+
 fn refresh_media_list(ui: &MainWindow, store: &Store, state: &mut GuiState) {
     if let Ok(items) = store.list_media() {
         let rows: Vec<MediaRow> = items
@@ -2691,6 +2865,9 @@ fn canonical_chapters(list: &[Chapter]) -> Vec<Chapter> {
 }
 
 /// 落库后回读权威列表（人工锁定的章节会原地保留），失败则退回本次结果。
+///
+/// 先与库里现有章节比较：内容一致（常见于重复打开同一缓存）时直接复用，
+/// 不再 DELETE + 重新 INSERT + 回读，避免每次打开都写一遍库。
 fn save_and_reload_chapters(
     store: &Rc<RefCell<Store>>,
     media_id: Option<i64>,
@@ -2699,6 +2876,11 @@ fn save_and_reload_chapters(
     let Some(mid) = media_id else {
         return fresh;
     };
+    let fresh = canonical_chapters(&fresh);
+    match store.borrow().load_chapters(mid) {
+        Ok(existing) if !existing.is_empty() && existing == fresh => return existing,
+        _ => {}
+    }
     if let Err(e) = store.borrow().replace_chapters(mid, &fresh) {
         eprintln!("[limelisten] 章节落库失败: {e}");
     }

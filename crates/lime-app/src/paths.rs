@@ -107,14 +107,93 @@ pub fn find_model(prefer: &[&str]) -> Option<PathBuf> {
     None
 }
 
-/// 默认优先模型（GRILLING 第 5 轮：turbo q5_0 为准）
+/// 物理内存（MB）。用于在低配一体机上自动避开大模型。
+#[cfg(windows)]
+fn total_ram_mb() -> Option<u64> {
+    #[repr(C)]
+    struct MemoryStatusEx {
+        dw_length: u32,
+        dw_memory_load: u32,
+        ull_total_phys: u64,
+        ull_avail_phys: u64,
+        ull_total_page_file: u64,
+        ull_avail_page_file: u64,
+        ull_total_virtual: u64,
+        ull_avail_virtual: u64,
+        ull_avail_extended_virtual: u64,
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GlobalMemoryStatusEx(lp_buffer: *mut MemoryStatusEx) -> i32;
+    }
+    let mut status = MemoryStatusEx {
+        dw_length: std::mem::size_of::<MemoryStatusEx>() as u32,
+        dw_memory_load: 0,
+        ull_total_phys: 0,
+        ull_avail_phys: 0,
+        ull_total_page_file: 0,
+        ull_avail_page_file: 0,
+        ull_total_virtual: 0,
+        ull_avail_virtual: 0,
+        ull_avail_extended_virtual: 0,
+    };
+    let ok = unsafe { GlobalMemoryStatusEx(&mut status) };
+    (ok != 0).then(|| status.ull_total_phys / 1_048_576)
+}
+
+#[cfg(target_os = "linux")]
+fn total_ram_mb() -> Option<u64> {
+    let text = std::fs::read_to_string("/proc/meminfo").ok()?;
+    let kb: u64 = text
+        .lines()
+        .find(|l| l.starts_with("MemTotal:"))?
+        .split_whitespace()
+        .nth(1)?
+        .parse()
+        .ok()?;
+    Some(kb / 1024)
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn total_ram_mb() -> Option<u64> {
+    None
+}
+
+/// 默认优先模型：低配（≤4 核或 ≤8GB）优先 small/base，避免 547MB 级别的
+/// turbo 模型在 4GB 一体机上把内存和 CPU 拖死；高配仍以 turbo q5_0 为准。
 pub fn default_model() -> Option<PathBuf> {
-    find_model(&[
-        "ggml-large-v3-turbo-q5_0.bin",
-        "ggml-medium.en.bin",
-        "ggml-small.en.bin",
-        "ggml-base.en.bin",
-    ])
+    let cores = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(2);
+    let low_spec = cores <= 4 || total_ram_mb().map(|mb| mb <= 8 * 1024).unwrap_or(false);
+    let prefer: &[&str] = if low_spec {
+        &[
+            "ggml-small.en.bin",
+            "ggml-small.bin",
+            "ggml-base.en.bin",
+            "ggml-base.bin",
+            "ggml-tiny.en.bin",
+            "ggml-tiny.bin",
+            "ggml-large-v3-turbo-q5_0.bin",
+            "ggml-large-v3-turbo.bin",
+            "ggml-medium.en.bin",
+            "ggml-medium.bin",
+        ]
+    } else {
+        &[
+            "ggml-large-v3-turbo-q5_0.bin",
+            "ggml-large-v3-turbo.bin",
+            "ggml-medium.en.bin",
+            "ggml-medium.bin",
+            "ggml-small.en.bin",
+            "ggml-small.bin",
+            "ggml-base.en.bin",
+            "ggml-base.bin",
+            "ggml-tiny.en.bin",
+            "ggml-tiny.bin",
+        ]
+    };
+    find_model(prefer)
 }
 
 /// 按规格名称查找模型 (turbo, small, base, tiny)
@@ -173,14 +252,16 @@ pub const MODEL_SPECS: &[ModelSpecMeta] = &[
     ModelSpecMeta {
         spec: "turbo",
         name: "Large-v3-Turbo",
-        filename: "ggml-large-v3-turbo.bin",
+        // 必须是 q5_0 量化版：同名非量化 ggml-large-v3-turbo.bin 实际约 1.62GB，
+        // 在 4GB 教室里光加载就接近 OOM；574MB 对应的是 q5_0 文件。
+        filename: "ggml-large-v3-turbo-q5_0.bin",
         desc: "高精度",
         approx_size_mb: 547,
         size_bytes: 574_041_195,
         primary_url:
-            "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+            "https://hf-mirror.com/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
         fallback_url:
-            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo.bin",
+            "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-large-v3-turbo-q5_0.bin",
     },
     ModelSpecMeta {
         spec: "small",
@@ -305,6 +386,73 @@ pub fn cache_dir() -> PathBuf {
     d
 }
 
+/// 缓存上限，默认 2 GB；可用 `LIMELISTEN_CACHE_LIMIT_MB` 覆盖。
+fn cache_limit_bytes() -> u64 {
+    std::env::var("LIMELISTEN_CACHE_LIMIT_MB")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|mb| mb.saturating_mul(1024 * 1024))
+        .unwrap_or(2 * 1024 * 1024 * 1024)
+}
+
+/// 按修改时间做 LRU 清理 `data/cache` 下的 16k WAV / ASR JSON / 测速中间文件。
+///
+/// 这些文件都能随时重新生成；不设上限时，长期使用会悄悄吃掉几个 GB。
+/// 最近 5 分钟写入的文件跳过，避免误删其它实例正在写的内容。
+pub fn prune_cache() -> std::io::Result<u64> {
+    prune_cache_dir(&cache_dir(), cache_limit_bytes())
+}
+
+fn prune_cache_dir(dir: &Path, limit: u64) -> std::io::Result<u64> {
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = Vec::new();
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(dir)? {
+        let Ok(entry) = entry else { continue };
+        let p = entry.path();
+        if !p.is_file() {
+            continue;
+        }
+        let ext = p
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        if ext != "wav" && ext != "json" {
+            continue;
+        }
+        let Ok(meta) = entry.metadata() else { continue };
+        total = total.saturating_add(meta.len());
+        files.push((
+            meta.modified().unwrap_or(std::time::UNIX_EPOCH),
+            meta.len(),
+            p,
+        ));
+    }
+    if total <= limit {
+        return Ok(0);
+    }
+
+    files.sort_by_key(|(mtime, _, _)| *mtime);
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(300))
+        .unwrap_or(std::time::UNIX_EPOCH);
+    let mut removed = 0u64;
+    for (mtime, len, p) in files {
+        if total <= limit {
+            break;
+        }
+        if mtime >= cutoff {
+            // 按时间排序，之后都是新文件，不再删除。
+            break;
+        }
+        if std::fs::remove_file(&p).is_ok() {
+            total = total.saturating_sub(len);
+            removed = removed.saturating_add(len);
+        }
+    }
+    Ok(removed)
+}
+
 /// 用文件路径 + 修改时间生成稳定的缓存 key
 #[allow(dead_code)]
 pub fn cache_key(path: &Path) -> String {
@@ -321,4 +469,46 @@ pub fn cache_key(path: &Path) -> String {
         }
     }
     format!("{:016x}", h.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{Duration, SystemTime};
+
+    /// 下载条目必须是 574MB 的 q5_0 量化模型，而不是 1.62GB 的 f16 原版。
+    #[test]
+    fn turbo_spec_points_to_quantized_file() {
+        let meta = get_spec_meta("turbo").unwrap();
+        assert_eq!(meta.filename, "ggml-large-v3-turbo-q5_0.bin");
+        assert!(meta.primary_url.ends_with("ggml-large-v3-turbo-q5_0.bin"));
+        assert!(meta.fallback_url.ends_with("ggml-large-v3-turbo-q5_0.bin"));
+        assert_eq!(meta.size_bytes, 574_041_195);
+    }
+
+    #[test]
+    fn prune_cache_removes_oldest_files_only() {
+        let dir = std::env::temp_dir().join(format!("lime_cache_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let write = |name: &str, age_secs: u64| {
+            let p = dir.join(name);
+            std::fs::write(&p, vec![0u8; 600]).unwrap();
+            let f = std::fs::OpenOptions::new().write(true).open(&p).unwrap();
+            f.set_modified(SystemTime::now() - Duration::from_secs(age_secs))
+                .unwrap();
+        };
+        write("a.wav", 3600);
+        write("b.json", 1800);
+        write("recent.wav", 10);
+
+        let removed = prune_cache_dir(&dir, 700).unwrap();
+        assert_eq!(removed, 1200, "应删掉两份旧文件");
+        assert!(!dir.join("a.wav").exists());
+        assert!(!dir.join("b.json").exists());
+        assert!(dir.join("recent.wav").exists(), "5 分钟内的新文件不能删");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

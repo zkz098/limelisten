@@ -7,6 +7,8 @@ use lime_core::{
 use rusqlite::{params, Connection, OptionalExtension};
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::mpsc::{self, Sender};
+use std::thread::JoinHandle;
 
 pub const SCHEMA_VERSION: i64 = 4;
 
@@ -20,6 +22,17 @@ pub struct MediaItem {
     pub chapter_ordinal: u32,
     pub is_analyzed: bool,
     pub plays: u32,
+}
+
+/// 文件夹扫描得到的一条待入库媒体（不占用 UI 线程做文件 IO）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaUpsert {
+    pub path: String,
+    pub size: i64,
+    pub mtime: i64,
+    pub duration_ms: i64,
+    pub sample_rate: i64,
+    pub channels: i64,
 }
 
 pub struct Store {
@@ -46,6 +59,10 @@ impl Store {
             .execute_batch(
                 r#"
                 PRAGMA journal_mode = WAL;
+                -- WAL 下 NORMAL 仍能保证应用崩溃一致性，但省掉每次提交的 fsync；
+                -- 低端 eMMC 上进度/章节的小写入不再每 1.5 秒卡一次盘。
+                PRAGMA synchronous = NORMAL;
+                PRAGMA busy_timeout = 5000;
                 PRAGMA foreign_keys = ON;
                 CREATE TABLE IF NOT EXISTS setting(k TEXT PRIMARY KEY, v TEXT);
                 CREATE TABLE IF NOT EXISTS media(
@@ -179,6 +196,43 @@ impl Store {
                 r.get(0)
             })
             .map_err(|e| Error::Store(e.to_string()))
+    }
+
+    /// 批量入库（文件夹扫描用）：单事务，避免每个文件一次 fsync。
+    pub fn upsert_media_batch(&self, items: &[MediaUpsert]) -> Result<()> {
+        if items.is_empty() {
+            return Ok(());
+        }
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| Error::Store(e.to_string()))?;
+        {
+            let mut stmt = tx
+                .prepare(
+                    "INSERT INTO media(path,size,mtime,duration_ms,sample_rate,channels,added_at)
+                     VALUES(?1,?2,?3,?4,?5,?6,?7)
+                     ON CONFLICT(path) DO UPDATE SET size=excluded.size, mtime=excluded.mtime,
+                       duration_ms=excluded.duration_ms, sample_rate=excluded.sample_rate,
+                       channels=excluded.channels",
+                )
+                .map_err(|e| Error::Store(e.to_string()))?;
+            let now = now_ms();
+            for item in items {
+                stmt.execute(params![
+                    item.path,
+                    item.size,
+                    item.mtime,
+                    item.duration_ms,
+                    item.sample_rate,
+                    item.channels,
+                    now
+                ])
+                .map_err(|e| Error::Store(e.to_string()))?;
+            }
+        }
+        tx.commit().map_err(|e| Error::Store(e.to_string()))?;
+        Ok(())
     }
 
     pub fn get_media_by_path(&self, path: &str) -> Result<Option<Media>> {
@@ -821,6 +875,59 @@ impl Store {
     }
 }
 
+/// 播放进度异步写线程：UI 线程只投递，不碰 SQLite 提交。
+///
+/// 播放中每几秒一次写盘，放在 UI 线程上虽然有了 `synchronous=NORMAL` 仍会偶发卡顿；
+/// 独立连接 + 队列后，SQLite 锁竞争最多影响这个线程，不会拖住界面。
+pub struct ProgressSaver {
+    tx: Option<Sender<(i64, u64, u32)>>,
+    handle: Option<JoinHandle<()>>,
+}
+
+impl ProgressSaver {
+    pub fn spawn(db_path: &Path) -> Result<Self> {
+        let path = db_path.to_path_buf();
+        let (tx, rx) = mpsc::channel();
+        let handle = std::thread::Builder::new()
+            .name("lime-progress".into())
+            .spawn(move || {
+                let store = match Store::open(&path) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!("[lime-store] 进度写线程打开数据库失败: {e}");
+                        return;
+                    }
+                };
+                while let Ok((media_id, pos_ms, chapter_ordinal)) = rx.recv() {
+                    if let Err(e) = store.save_progress(media_id, pos_ms, chapter_ordinal) {
+                        eprintln!("[lime-store] 进度保存失败: {e}");
+                    }
+                }
+            })
+            .map_err(|e| Error::Io(e.to_string()))?;
+        Ok(Self {
+            tx: Some(tx),
+            handle: Some(handle),
+        })
+    }
+
+    pub fn save(&self, media_id: i64, pos_ms: u64, chapter_ordinal: u32) {
+        if let Some(tx) = &self.tx {
+            let _ = tx.send((media_id, pos_ms, chapter_ordinal));
+        }
+    }
+}
+
+impl Drop for ProgressSaver {
+    fn drop(&mut self) {
+        // 关闭通道后线程会先把队列里的更新写完再退出。
+        self.tx.take();
+        if let Some(h) = self.handle.take() {
+            let _ = h.join();
+        }
+    }
+}
+
 fn now_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -831,6 +938,7 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     fn mat(seq: u32, ordinal: u32, start: u64, end: u64, title: &str) -> Chapter {
         Chapter {
@@ -884,6 +992,59 @@ mod tests {
             .upsert_media("test.mp3", 1000, 2000, 60_000, 44100, 2)
             .unwrap();
         (s, mid)
+    }
+
+    /// 批量入库是单事务、幂等；进度写线程能把更新真正落到磁盘。
+    #[test]
+    fn batch_upsert_and_progress_saver() {
+        let path =
+            std::env::temp_dir().join(format!("lime_store_progress_{}.db", std::process::id()));
+        for suffix in ["", "-wal", "-shm"] {
+            let p = PathBuf::from(format!("{}{}", path.display(), suffix));
+            let _ = std::fs::remove_file(p);
+        }
+
+        let mid = {
+            let s = Store::open(&path).unwrap();
+            let items = vec![
+                MediaUpsert {
+                    path: "a.mp3".into(),
+                    size: 1,
+                    mtime: 2,
+                    duration_ms: 3_000,
+                    sample_rate: 44_100,
+                    channels: 2,
+                },
+                MediaUpsert {
+                    path: "b.mp3".into(),
+                    size: 3,
+                    mtime: 4,
+                    duration_ms: 5_000,
+                    sample_rate: 48_000,
+                    channels: 1,
+                },
+            ];
+            s.upsert_media_batch(&items).unwrap();
+            assert_eq!(s.list_media().unwrap().len(), 2);
+
+            // 同路径再写入是更新而不是新增
+            s.upsert_media_batch(&items[..1]).unwrap();
+            assert_eq!(s.list_media().unwrap().len(), 2);
+
+            let mid = s.get_media_by_path("a.mp3").unwrap().unwrap().id;
+            let saver = ProgressSaver::spawn(&path).unwrap();
+            saver.save(mid, 1_234, 2);
+            drop(saver); // join，确保队列刷完
+            mid
+        };
+
+        let s = Store::open(&path).unwrap();
+        assert_eq!(s.get_progress(mid).unwrap(), Some((1_234, 2)));
+        drop(s);
+        for suffix in ["", "-wal", "-shm"] {
+            let p = PathBuf::from(format!("{}{}", path.display(), suffix));
+            let _ = std::fs::remove_file(p);
+        }
     }
 
     #[test]

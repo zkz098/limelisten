@@ -17,6 +17,8 @@
 //!
 //! 实现用二阶带通（biquad）+ 滑动包络，O(n)，1 GB 级音频也只需几百毫秒。
 
+use crate::EnvelopeAccumulator;
+
 /// 二阶带通滤波器（RBJ cookbook）。
 #[derive(Debug, Clone, Copy)]
 struct Biquad {
@@ -148,40 +150,66 @@ impl Chime {
 /// 时间→下标换算**必须**用返回值，否则会累积漂移（实测在 151 s 处漂移 340 ms，
 /// 让“前导静音”窗口滑到标记自己身上，从而漏检）。
 pub fn rms_env_db(x: &[f32], sr: u32, frame_ms: f32, hop_ms: f32) -> (Vec<f32>, f32) {
-    let frame = ((frame_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
-    let hop = ((hop_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
-    let hop_ms_real = hop as f32 / sr as f32 * 1000.0;
-    if x.len() < frame {
-        return (Vec::new(), hop_ms_real);
-    }
-    let n = 1 + (x.len() - frame) / hop;
-    let mut out = Vec::with_capacity(n);
-    for i in 0..n {
-        let seg = &x[i * hop..i * hop + frame];
-        let ms = seg.iter().map(|v| (*v as f64) * (*v as f64)).sum::<f64>() / frame as f64;
-        out.push((10.0 * (ms + 1e-20).log10()) as f32);
-    }
-    (out, hop_ms_real)
+    let mut acc = EnvelopeAccumulator::new(sr, frame_ms, hop_ms);
+    acc.push(x);
+    acc.finish()
 }
 
 /// 单频带包络（dB）。返回 **真实** 时间步长（ms，= 窗长取整后的实际毫秒数），
 /// 时间→下标换算必须用它（理由同 `rms_env_db`）。
 pub fn band_env_db(x: &[f32], sr: u32, f0: f32, params: &ChimeParams) -> (Vec<f32>, f32) {
-    let mut bp = Biquad::bandpass(sr as f32, f0, params.q);
-    let filtered: Vec<f32> = x.iter().map(|v| bp.process(*v)).collect();
-    let win = ((params.env_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
-    let dt_ms = win as f32 / sr as f32 * 1000.0;
-    let mut out = Vec::with_capacity(filtered.len() / win + 1);
-    let mut acc = 0.0f64;
-    for (i, v) in filtered.iter().enumerate() {
-        acc += (*v as f64) * (*v as f64);
-        if (i + 1) % win == 0 {
-            let ms = acc / win as f64;
-            out.push((10.0 * (ms + 1e-20).log10()) as f32);
-            acc = 0.0;
+    let mut acc = BandEnvelopeAccumulator::new(sr, f0, params);
+    acc.push(x);
+    acc.finish()
+}
+
+/// 流式单频带包络：biquad 状态与 20 ms 窗口累积量一直保留，
+/// 不再为整段音频额外分配一份滤波结果（长音频上可省下数百 MB）。
+pub struct BandEnvelopeAccumulator {
+    bp: Biquad,
+    win: usize,
+    sample_rate: u32,
+    acc: f64,
+    fill: usize,
+    env: Vec<f32>,
+}
+
+impl BandEnvelopeAccumulator {
+    pub fn new(sr: u32, f0: f32, params: &ChimeParams) -> Self {
+        let sr = sr.max(1);
+        let win = ((params.env_ms / 1000.0) * sr as f32).round().max(1.0) as usize;
+        Self {
+            bp: Biquad::bandpass(sr as f32, f0, params.q),
+            win,
+            sample_rate: sr,
+            acc: 0.0,
+            fill: 0,
+            env: Vec::new(),
         }
     }
-    (out, dt_ms)
+
+    pub fn push(&mut self, samples: &[f32]) {
+        for &v in samples {
+            let y = self.bp.process(v);
+            self.acc += (y as f64) * (y as f64);
+            self.fill += 1;
+            if self.fill == self.win {
+                let ms = self.acc / self.win as f64;
+                self.env.push((10.0 * (ms + 1e-20).log10()) as f32);
+                self.acc = 0.0;
+                self.fill = 0;
+            }
+        }
+    }
+
+    pub fn dt_ms(&self) -> f32 {
+        self.win as f32 / self.sample_rate as f32 * 1000.0
+    }
+
+    pub fn finish(self) -> (Vec<f32>, f32) {
+        let dt = self.dt_ms();
+        (self.env, dt)
+    }
 }
 
 pub fn median_db(v: &[f32]) -> f32 {
@@ -321,13 +349,29 @@ pub fn detect_chimes(x: &[f32], sr: u32, params: &ChimeParams) -> Vec<Chime> {
     let (rms, rms_hop) = rms_env_db(x, sr, 20.0, 5.0);
     let (ding_env, ding_ms) = band_env_db(x, sr, params.ding_hz, params);
     let (dong_env, dong_ms) = band_env_db(x, sr, params.dong_hz, params);
-    let dings = detect_band(&ding_env, ding_ms, &rms, rms_hop, params, true);
+    detect_chimes_from_envelopes(
+        &rms, rms_hop, &ding_env, ding_ms, &dong_env, dong_ms, params,
+    )
+}
+
+/// 由已经算好的包络做叮咚配对。流式分析路径用它复用单遍解码得到的包络。
+#[allow(clippy::too_many_arguments)]
+pub fn detect_chimes_from_envelopes(
+    rms: &[f32],
+    rms_hop: f32,
+    ding_env: &[f32],
+    ding_ms: f32,
+    dong_env: &[f32],
+    dong_ms: f32,
+    params: &ChimeParams,
+) -> Vec<Chime> {
+    let dings = detect_band(ding_env, ding_ms, rms, rms_hop, params, true);
 
     let mut out = Vec::new();
     for (d_t, d_db) in dings {
         let from = d_t + params.pair_min_s * 1000.0;
         let to = d_t + params.pair_max_s * 1000.0;
-        let Some((g_t, g_db)) = peak_with_decay(&dong_env, dong_ms, from, to, params) else {
+        let Some((g_t, g_db)) = peak_with_decay(dong_env, dong_ms, from, to, params) else {
             continue;
         };
         let delta = (g_t - d_t) / 1000.0;
@@ -401,6 +445,45 @@ mod tests {
             chimes.is_empty(),
             "sustained noise must not match, got {chimes:?}"
         );
+    }
+
+    /// 流式带通/RMS 包络必须与整段计算一致（否则切分边界会漂）。
+    #[test]
+    fn streaming_envelopes_match_batch() {
+        let sr = 48_000u32;
+        let params = ChimeParams::default();
+        let mut x = vec![0.0f32; sr as usize * 2];
+        for (i, v) in x.iter_mut().enumerate() {
+            let t = i as f32 / sr as f32;
+            if (0.5..1.2).contains(&t) {
+                *v = 0.2 * (2.0 * std::f32::consts::PI * params.ding_hz * t).sin();
+            } else if (1.09..1.8).contains(&t) {
+                *v = 0.15 * (2.0 * std::f32::consts::PI * params.dong_hz * t).sin();
+            }
+        }
+
+        let (rms_batch, rms_hop) = rms_env_db(&x, sr, 20.0, 5.0);
+        let (ding_batch, ding_dt) = band_env_db(&x, sr, params.ding_hz, &params);
+        let (dong_batch, dong_dt) = band_env_db(&x, sr, params.dong_hz, &params);
+
+        let mut rms = EnvelopeAccumulator::new(sr, 20.0, 5.0);
+        let mut ding = BandEnvelopeAccumulator::new(sr, params.ding_hz, &params);
+        let mut dong = BandEnvelopeAccumulator::new(sr, params.dong_hz, &params);
+        for chunk in x.chunks(997) {
+            rms.push(chunk);
+            ding.push(chunk);
+            dong.push(chunk);
+        }
+        let (rms_stream, rms_hop2) = rms.finish();
+        let (ding_stream, ding_dt2) = ding.finish();
+        let (dong_stream, dong_dt2) = dong.finish();
+
+        assert_eq!(rms_batch, rms_stream);
+        assert_eq!(ding_batch, ding_stream);
+        assert_eq!(dong_batch, dong_stream);
+        assert_eq!(rms_hop, rms_hop2);
+        assert_eq!(ding_dt, ding_dt2);
+        assert_eq!(dong_dt, dong_dt2);
     }
 
     /// 宽带瞬态对（间隔 ≈0.59 s）不应被当成叮咚：它没有音调纯度。

@@ -17,6 +17,7 @@
 //! （人工锁定的材料不参与合并）。
 
 use lime_core::{normalize_chapters, Chapter, ChapterLevel, Sentence};
+use std::collections::HashMap;
 
 /// 重复检测参数。
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -185,9 +186,38 @@ fn is_repeat(a: &[String], b: &[String], p: &RepeatParams) -> bool {
     if long.len() as f32 > short.len() as f32 * p.max_len_ratio {
         return false;
     }
+    if a == b {
+        return true;
+    }
+    // O(n+m) 上界预筛：LCS 不可能超过两份词表的多重集交集。
+    // 相邻的不同材料通常在这里就被排除，不再进 O(n·m) 的 LCS；
+    // 只有疑似重复（真正的第二遍朗读）才支付完整代价。
+    let common = multiset_overlap_upper_bound(a, b) as f32;
+    if 2.0 * common / ((a.len() + b.len()) as f32) < p.min_similarity {
+        return false;
+    }
     let l = lcs_len(a, b) as f32;
     let sim = 2.0 * l / (a.len() + b.len()) as f32;
     sim >= p.min_similarity
+}
+
+/// 两份词表的多重集交集大小（同时是 LCS 的严格上界）。
+fn multiset_overlap_upper_bound(a: &[String], b: &[String]) -> usize {
+    let (short, long) = if a.len() <= b.len() { (a, b) } else { (b, a) };
+    let mut counts: HashMap<&str, usize> = HashMap::with_capacity(long.len());
+    for w in long {
+        *counts.entry(w.as_str()).or_insert(0) += 1;
+    }
+    let mut common = 0;
+    for w in short {
+        if let Some(c) = counts.get_mut(w.as_str()) {
+            if *c > 0 {
+                *c -= 1;
+                common += 1;
+            }
+        }
+    }
+    common
 }
 
 /// 词级最长公共子序列长度（滚动数组，O(n·m)）。
@@ -290,6 +320,26 @@ mod tests {
         let rep = merge_repeated_materials_with(&chapters, &sentences, &RepeatParams::default());
         assert_eq!(rep.merged, 0);
         assert_eq!(rep.chapters.iter().filter(|c| c.is_material()).count(), 2);
+    }
+
+    /// 多重集交集是 LCS 的上界；不同材料的交集应当远低于阈值，从而跳过 O(n·m) 的 LCS。
+    #[test]
+    fn multiset_overlap_is_a_safe_lcs_upper_bound() {
+        let a: Vec<String> = "the quick brown fox jumps over the lazy dog today"
+            .split(' ')
+            .map(String::from)
+            .collect();
+        let b: Vec<String> = "a completely different passage about listening practice"
+            .split(' ')
+            .map(String::from)
+            .collect();
+        let overlap = multiset_overlap_upper_bound(&a, &b);
+        assert!(overlap >= lcs_len(&a, &b));
+        let dice_upper = 2.0 * overlap as f32 / (a.len() + b.len()) as f32;
+        assert!(
+            dice_upper < RepeatParams::default().min_similarity,
+            "不同材料不应进入 LCS: {dice_upper}"
+        );
     }
 
     #[test]

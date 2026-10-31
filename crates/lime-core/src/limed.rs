@@ -166,11 +166,14 @@ impl LimedFile {
 }
 
 /// 在指定音频文件同目录下，寻找并校验是否存在符合的 `.limed` 缓存文件。
+///
+/// 返回**已解码**的缓存：调用方通常马上要用它，避免为了校验元信息
+/// 先解压/反序列化一遍、再加载一遍（大缓存上这是一笔实打实的 UI 停顿）。
 pub fn find_matching_limed(
     audio_path: &Path,
     audio_duration_ms: u64,
     audio_size: Option<u64>,
-) -> Option<PathBuf> {
+) -> Option<(PathBuf, LimedFile)> {
     let mut candidates = Vec::new();
 
     // 候选 1: audio_name.limed (如 "训练2.mp3" -> "训练2.limed")
@@ -185,7 +188,7 @@ pub fn find_matching_limed(
         if cand.is_file() {
             if let Ok(limed) = LimedFile::load(&cand) {
                 if limed.matches_audio(audio_duration_ms, audio_size) {
-                    return Some(cand);
+                    return Some((cand, limed));
                 }
             }
         }

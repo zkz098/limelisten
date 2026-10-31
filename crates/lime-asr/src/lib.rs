@@ -31,15 +31,25 @@ pub struct WhisperCli {
 /// 指纹计算与 `WhisperCli::new` 共用这个常量，避免两处漂移。
 pub const DEFAULT_LANGUAGE: &str = "en";
 
-/// 转写线程数：**留一个核**给 UI 渲染与音频回调。
+/// 转写线程数策略：4 核及以上留一个核给 UI/音频；2 核机型用满 2 线程。
 ///
-/// whisper.cpp 默认吃满所有核；在 2–4 核的低端机上这会让界面卡顿、音频欠载。
-/// 1 核机器上不打算再留（`max(1)`），否则就没法跑。
+/// whisper.cpp 默认吃满所有核，4 核以上确实会抢 UI；但 2 核机器上只给 1 线程
+/// 会让转写时间直接翻倍，而 UI 渲染和音频回调本身占用的 CPU 很少，且整个
+/// whisper 进程已经是 BelowNormal/CREATE_NO_WINDOW，优先保障 UI 的代价太大。
+fn threads_for_cores(cores: usize) -> usize {
+    if cores <= 2 {
+        cores.max(1)
+    } else {
+        cores - 1
+    }
+}
+
+/// 转写线程数（按本机核数）。
 pub fn default_threads() -> usize {
     let cores = std::thread::available_parallelism()
         .map(|n| n.get())
         .unwrap_or(2);
-    cores.saturating_sub(1).max(1)
+    threads_for_cores(cores)
 }
 
 /// 把**当前线程**降到 Below Normal 优先级（仅 Windows 生效，其它平台无操作）。
@@ -396,17 +406,19 @@ mod tests {
         assert_eq!((words[1].start_ms, words[1].end_ms), (120, 540));
     }
 
-    /// 转写必须留出至少一个核给 UI/音频，且不能超过可用核数。
+    /// 4 核以上留一个核给 UI/音频；2 核及以下用满，避免转写时间翻倍。
     #[test]
-    fn default_threads_reserves_a_core() {
+    fn thread_policy_reserves_a_core_only_on_bigger_machines() {
+        assert_eq!(threads_for_cores(1), 1);
+        assert_eq!(threads_for_cores(2), 2);
+        assert_eq!(threads_for_cores(4), 3);
+        assert_eq!(threads_for_cores(8), 7);
+
         let cores = std::thread::available_parallelism()
             .map(|n| n.get())
             .unwrap_or(2);
         let t = default_threads();
         assert!(t >= 1, "至少要能跑（1 核机器）");
         assert!(t <= cores, "不能超过可用核数");
-        if cores > 1 {
-            assert_eq!(t, cores - 1, "应当留一个核");
-        }
     }
 }
