@@ -1696,10 +1696,18 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 ui.set_edit_q_num_text(q.num.to_string().into());
                 ui.set_edit_q_stem(q.stem.into());
 
-                ui.set_edit_q_opt_a(strip_option_prefix(q.options.get(0).map(|s| s.as_str()).unwrap_or("")).into());
-                ui.set_edit_q_opt_b(strip_option_prefix(q.options.get(1).map(|s| s.as_str()).unwrap_or("")).into());
-                ui.set_edit_q_opt_c(strip_option_prefix(q.options.get(2).map(|s| s.as_str()).unwrap_or("")).into());
-                ui.set_edit_q_opt_d(strip_option_prefix(q.options.get(3).map(|s| s.as_str()).unwrap_or("")).into());
+                ui.set_edit_q_opt_a(
+                    strip_option_prefix(q.options.first().map(|s| s.as_str()).unwrap_or("")).into(),
+                );
+                ui.set_edit_q_opt_b(
+                    strip_option_prefix(q.options.get(1).map(|s| s.as_str()).unwrap_or("")).into(),
+                );
+                ui.set_edit_q_opt_c(
+                    strip_option_prefix(q.options.get(2).map(|s| s.as_str()).unwrap_or("")).into(),
+                );
+                ui.set_edit_q_opt_d(
+                    strip_option_prefix(q.options.get(3).map(|s| s.as_str()).unwrap_or("")).into(),
+                );
 
                 ui.set_edit_q_answer(q.answer.unwrap_or_default().into());
                 ui.set_edit_q_explanation(q.explanation.unwrap_or_default().into());
@@ -1792,10 +1800,7 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 return;
             }
 
-            let mut options = vec![
-                format_option('A', &opt_a),
-                format_option('B', &opt_b),
-            ];
+            let mut options = vec![format_option('A', &opt_a), format_option('B', &opt_b)];
             if !opt_c.is_empty() {
                 options.push(format_option('C', &opt_c));
             }
@@ -1855,14 +1860,20 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                         true
                     });
                 }
-                st.exercises.retain(|m| m.material_ordinal == mat_ord || !m.questions.is_empty());
+                st.exercises
+                    .retain(|m| m.material_ordinal == mat_ord || !m.questions.is_empty());
 
-                if let Some(target_mat) = st.exercises.iter_mut().find(|m| m.material_ordinal == mat_ord) {
+                if let Some(target_mat) = st
+                    .exercises
+                    .iter_mut()
+                    .find(|m| m.material_ordinal == mat_ord)
+                {
                     target_mat.title = mat_title;
                     target_mat.questions.push(q);
                     target_mat.questions.sort_by_key(|item| item.num);
                 } else {
-                    st.exercises.push(MaterialExercise::new(mat_ord, mat_title, vec![q]));
+                    st.exercises
+                        .push(MaterialExercise::new(mat_ord, mat_title, vec![q]));
                     st.exercises.sort_by_key(|m| m.material_ordinal);
                 }
 
@@ -1890,7 +1901,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 ui.set_edit_q_opt_d("".into());
                 ui.set_edit_q_answer("".into());
                 ui.set_edit_q_explanation("".into());
-                ui.set_status(format!("已保存试题 第 {q_num} 题，可继续录入第 {next_num} 题").into());
+                ui.set_status(
+                    format!("已保存试题 第 {q_num} 题，可继续录入第 {next_num} 题").into(),
+                );
             } else {
                 ui.set_show_exercise_modal(false);
                 if ui.get_main_tab() == 0 {
@@ -3307,28 +3320,30 @@ mod tests {
         assert_eq!(ui.get_edit_q_explanation(), "He asked for coffee.");
 
         // 3. 测试 init_manual_exercise_modal 自动填充下一题题号及当前材料
-        let mut st = GuiState::default();
-        st.active_material_ordinal = 2;
-        st.exercises = vec![
-            MaterialExercise::new(
-                1,
-                "Text 1",
-                vec![ExerciseQuestion::new(
+        let st = GuiState {
+            active_material_ordinal: 2,
+            exercises: vec![
+                MaterialExercise::new(
                     1,
-                    "Q1",
-                    vec!["A. 1".into(), "B. 2".into()],
-                )],
-            ),
-            MaterialExercise::new(
-                2,
-                "Text 2",
-                vec![ExerciseQuestion::new(
+                    "Text 1",
+                    vec![ExerciseQuestion::new(
+                        1,
+                        "Q1",
+                        vec!["A. 1".into(), "B. 2".into()],
+                    )],
+                ),
+                MaterialExercise::new(
                     2,
-                    "Q2",
-                    vec!["A. 3".into(), "B. 4".into()],
-                )],
-            ),
-        ];
+                    "Text 2",
+                    vec![ExerciseQuestion::new(
+                        2,
+                        "Q2",
+                        vec!["A. 3".into(), "B. 4".into()],
+                    )],
+                ),
+            ],
+            ..Default::default()
+        };
 
         init_manual_exercise_modal(&ui, &st);
         assert_eq!(ui.get_exercise_modal_tab(), 1);
