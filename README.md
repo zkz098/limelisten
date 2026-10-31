@@ -19,7 +19,7 @@
 ## 🛠️ 构建与运行
 
 ### 依赖环境
-- [Rust](https://rustup.rs/) (1.80+ 推荐)
+- [Rust](https://rustup.rs/) (1.92+ 推荐)
 - Linux 构建依赖：`libasound2-dev`, `libfontconfig1-dev`, `libxkbcommon-dev`
 
 > 老显卡 / 低功耗一体机若遇到启动黑屏或 OpenGL 驱动报错，可设置环境变量

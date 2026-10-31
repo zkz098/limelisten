@@ -290,7 +290,7 @@ GUI 左侧出现两份内容完全一样的「材料」。
 - **cpal 回调计数是“交错样本”而位置换算是“帧”**：不加通道归一化会让可听位置被卡在 0（实测变成 0.38 倍速）。
 - **whisper-cli 的 JSON 是追加扩展名**（`x.asr` → `x.asr.json`），而 `Path::with_extension` 是替换 ⇒ 找文件会失败。
 - **统一构建与工作流管理** ⇒ 提供 `cargo xtask` 统一跨平台构建，release 自动注入静态 CRT 与 x86-64-v3。
-- **symphonia 0.6 是破坏性重构**（`AudioCodecParameters`/`AudioSpec`/`plane`）⇒ 钉住稳定的 0.5。
+- **symphonia 0.6 已完成迁移**（`AudioCodecParameters`/`AudioSpec`/`plane` 新 API）；wav/mp3/flac/ogg/m4a/aiff/alac 的解码与 seek 已冒烟验证。
 
 ### 本轮质询的最终结论（一句话版）
 

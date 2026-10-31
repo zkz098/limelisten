@@ -2,6 +2,7 @@
 name = "lime-app"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 default-run = "limelisten"
 build = "build.rs"
@@ -18,10 +19,9 @@ lime-asr = { path = "../lime-asr" }
 lime-store = { path = "../lime-store" }
 slint.workspace = true
 anyhow.workspace = true
-log.workspace = true
 env_logger.workspace = true
 crossbeam-channel.workspace = true
-rfd = "0.15"
+rfd = "0.17"
 
 [build-dependencies]
 slint-build.workspace = true

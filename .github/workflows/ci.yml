@@ -43,7 +43,7 @@ jobs:
         run: cargo fmt --all -- --check
 
       - name: Clippy check
-        run: cargo clippy --workspace --all-targets -- -D warnings
+        run: cargo clippy --locked --workspace --all-targets -- -D warnings
 
   test:
     name: Test (${{ matrix.os }})
@@ -70,12 +70,27 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Cargo check
-        run: cargo check --workspace --all-targets
+        run: cargo check --locked --workspace --all-targets
 
       - name: Run unit & integration tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum cargo test --workspace --all-targets --verbose
+        run: xvfb-run --auto-servernum cargo test --locked --workspace --all-targets --verbose
 
       - name: Run unit & integration tests (Windows)
         if: runner.os != 'Linux'
-        run: cargo test --workspace --all-targets --verbose
+        run: cargo test --locked --workspace --all-targets --verbose
+
+  audit:
+    name: Dependency Audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Audit dependencies
+        run: cargo audit

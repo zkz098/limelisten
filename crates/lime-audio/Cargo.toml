@@ -2,6 +2,7 @@
 name = "lime-audio"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
@@ -10,6 +11,4 @@ symphonia.workspace = true
 cpal.workspace = true
 signalsmith-stretch.workspace = true
 crossbeam-channel.workspace = true
-parking_lot.workspace = true
-log.workspace = true
 hound.workspace = true

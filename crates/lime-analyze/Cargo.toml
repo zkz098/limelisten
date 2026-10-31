@@ -2,12 +2,12 @@
 name = "lime-analyze"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
 lime-core = { path = "../lime-core" }
-serde.workspace = true
 regex.workspace = true
 
 [dev-dependencies]
-hound = "3.5"
+hound.workspace = true

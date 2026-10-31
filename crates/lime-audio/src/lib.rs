@@ -24,10 +24,10 @@ pub struct AudioInfo {
 
 /// 用 symphonia probe 读取时长/采样率/声道数（不解码全文件）。
 pub fn probe(path: &Path) -> Result<AudioInfo> {
-    use symphonia::core::formats::FormatOptions;
+    use symphonia::core::formats::probe::Hint;
+    use symphonia::core::formats::{FormatOptions, TrackType};
     use symphonia::core::io::MediaSourceStream;
     use symphonia::core::meta::MetadataOptions;
-    use symphonia::core::probe::Hint;
 
     let file = std::fs::File::open(path).map_err(|e| Error::Io(e.to_string()))?;
     let mss = MediaSourceStream::new(Box::new(file), Default::default());
@@ -35,28 +35,37 @@ pub fn probe(path: &Path) -> Result<AudioInfo> {
     if let Some(ext) = path.extension().and_then(|e| e.to_str()) {
         hint.with_extension(ext);
     }
-    let probed = symphonia::default::get_probe()
-        .format(
+    let format = symphonia::default::get_probe()
+        .probe(
             &hint,
             mss,
-            &FormatOptions::default(),
-            &MetadataOptions::default(),
+            FormatOptions::default(),
+            MetadataOptions::default(),
         )
         .map_err(|e| Error::Decode(e.to_string()))?;
-    let track = probed
-        .format
-        .default_track()
+    let track = format
+        .default_track(TrackType::Audio)
         .ok_or_else(|| Error::Decode("no default track".into()))?;
-    let params = &track.codec_params;
+    let params = track
+        .codec_params
+        .as_ref()
+        .and_then(|params| params.audio())
+        .ok_or_else(|| Error::Decode("no audio codec parameters".into()))?;
     let sample_rate = params.sample_rate.unwrap_or(44_100);
-    let channels = params.channels.map(|c| c.count() as u16).unwrap_or(2);
-    let duration_ms = match (params.n_frames, params.time_base) {
-        (Some(frames), Some(tb)) => {
-            let t = tb.calc_time(frames);
-            t.seconds * 1000 + (t.frac * 1000.0) as u64
-        }
-        (Some(frames), None) => frames * 1000 / sample_rate as u64,
-        _ => 0,
+    let channels = params
+        .channels
+        .as_ref()
+        .map(|channels| channels.count() as u16)
+        .unwrap_or(2);
+    let duration_ms = match (track.time_base, track.duration) {
+        (Some(time_base), Some(duration)) => time_base
+            .calc_duration(duration)
+            .map(|time| time.as_millis().max(0) as u64)
+            .unwrap_or(0),
+        _ => track
+            .num_frames
+            .map(|frames| frames.saturating_mul(1000) / sample_rate as u64)
+            .unwrap_or(0),
     };
     Ok(AudioInfo {
         sample_rate,
