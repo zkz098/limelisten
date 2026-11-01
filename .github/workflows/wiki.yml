@@ -1,0 +1,40 @@
+name: Wiki
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+permissions:
+  contents: read
+
+env:
+  LOREDEX_VERSION: v0.1.6
+
+jobs:
+  verify:
+    name: Verify wiki evidence
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # evidence checks diff across history
+
+      - name: Install loredex
+        run: |
+          set -euo pipefail
+          url="https://github.com/zkz098/loredex/releases/download/${LOREDEX_VERSION}/loredex-cli-x86_64-unknown-linux-gnu.tar.xz"
+          curl -fsSL "$url" -o /tmp/loredex.tar.xz
+          tar -xJf /tmp/loredex.tar.xz -C /tmp
+          install -m 755 /tmp/loredex-cli-x86_64-unknown-linux-gnu/loredex /usr/local/bin/loredex
+          loredex --version
+
+      - name: Check AGENTS.md discovery block
+        run: loredex agents-md --check
+
+      - name: Lint wiki structure
+        run: loredex lint
+
+      - name: Check evidence freshness
+        run: loredex check

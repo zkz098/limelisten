@@ -16,6 +16,21 @@
 
 ---
 
+## 📚 项目 Wiki
+
+本仓库使用 [loredex](https://github.com/zkz098/loredex) 维护证据可回溯的 Wiki：页面位于 `.wiki/pages/`，每条论断都带 `[[cite:path:Lx-Ly]]` 源码引用并 pin 到 git 内容哈希。入口见 [`.wiki/pages/index.md`](.wiki/pages/index.md)。
+
+```bash
+loredex search "关键词"   # 检索页面
+loredex show <页面>       # 阅读页面
+loredex check             # 检查证据是否随代码漂移
+loredex auto              # 自愈可投影的漂移，并列出剩余写作任务
+```
+
+编码 Agent 通过项目级 `.mcp.json` 自动发现 `loredex-mcp`，并按 `AGENTS.md` 中的协议先查 Wiki、再读源码。使用前需安装 `loredex` / `loredex-mcp`（`cargo install loredex-cli loredex-mcp`，或从 Releases 下载预编译包）并确保其在 `PATH` 中。
+
+---
+
 ## 🛠️ 构建与运行
 
 ### 依赖环境

@@ -1,0 +1,11 @@
+# loredex configuration
+[wiki]
+pages = "pages"
+# skeleton text locale for generated pages/playbooks: "en" | "zh"
+language = "zh"
+# cache directory is gitignored; rebuildable, never committed
+
+[page_types.decision]
+description = "关键决策与实测依据；记录为什么这样选，以及仍未验证的风险"
+sections = ["背景", "关键决策", "工程约束", "风险与未验证项"]
+checklist = ["决策是什么?", "证据在哪里?", "哪些风险仍未验证?"]
