@@ -10,7 +10,8 @@ impl ExerciseParser {
     /// 解析输入的文本或 JSON 字符串。
     /// `known_material_count` 是音频当前切分出的材料数（去除引言后），用于在未检测到显式材料头时智能分组。
     pub fn parse(input: &str, known_material_count: usize) -> Vec<MaterialExercise> {
-        let trimmed = input.trim();
+        let sanitized = sanitize_input(input);
+        let trimmed = sanitized.trim();
         if trimmed.is_empty() {
             return Vec::new();
         }
@@ -326,6 +327,61 @@ impl ExerciseParser {
     }
 }
 
+/// 归一化复制粘贴文本：统一换行与空白，折叠影响结构识别的全角字符，
+/// 并清除零宽等不可见格式符。正文中的中文标点保持原样。
+pub(crate) fn sanitize_input(input: &str) -> String {
+    let normalized = input.replace("\r\n", "\n").replace('\r', "\n");
+    let mut out = String::with_capacity(normalized.len());
+    for c in normalized.chars() {
+        if c == '\n' || matches!(c, '\u{0085}' | '\u{2028}' | '\u{2029}') {
+            out.push('\n');
+        } else if is_invisible_format(c) {
+            continue;
+        } else if c.is_whitespace() {
+            out.push(' ');
+        } else {
+            out.push(fold_structural_fullwidth(c));
+        }
+    }
+    out
+}
+
+/// 仅折叠题号/选项/答案等结构位置可能出现的全角字符，
+/// 避免像 NFKC 那样连正文问号、逗号等一并改写。
+fn fold_structural_fullwidth(c: char) -> char {
+    match c {
+        '\u{FF10}'..='\u{FF19}' | '\u{FF21}'..='\u{FF3A}' | '\u{FF41}'..='\u{FF5A}' => {
+            char::from_u32(c as u32 - 0xFEE0).unwrap_or(c)
+        }
+        '\u{FF0D}' => '-',
+        '\u{FF0E}' => '.',
+        '\u{FF1A}' => ':',
+        '\u{FF08}' => '(',
+        '\u{FF09}' => ')',
+        _ => c,
+    }
+}
+
+/// 复制粘贴常见的零宽/格式控制/变体选择符：无字形但会打断正则锚点。
+fn is_invisible_format(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{061C}'
+            | '\u{180E}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206F}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{FEFF}'
+            | '\u{FFF9}'..='\u{FFFB}'
+            | '\u{E0001}'
+            | '\u{E0020}'..='\u{E007F}'
+            | '\u{E0100}'..='\u{E01EF}'
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -461,5 +517,77 @@ A. Opt 1   B. Opt 2
         assert_eq!(result[0].questions.len(), 2);
         assert_eq!(result[1].material_ordinal, 2);
         assert_eq!(result[1].questions.len(), 2);
+    }
+
+    #[test]
+    fn test_parse_with_bom_and_zero_width_chars() {
+        let text = "\u{feff}Text 1\u{200b}\n\
+                    1\u{200b}. What is the woman doing?\n\
+                    A\u{200b}. Driving a car.\n\
+                    B\u{200b}. Walking in the park.\n\
+                    答案\u{200b}: B\n\
+                    解析\u{200b}: 女士在公园散步。";
+
+        let result = ExerciseParser::parse(text, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "Text 1");
+        assert_eq!(result[0].questions.len(), 1);
+        let q = &result[0].questions[0];
+        assert_eq!(q.num, 1);
+        assert_eq!(q.stem, "What is the woman doing?");
+        assert_eq!(
+            q.options,
+            vec!["A. Driving a car.", "B. Walking in the park."]
+        );
+        assert_eq!(q.answer.as_deref(), Some("B"));
+        assert_eq!(q.explanation.as_deref(), Some("女士在公园散步。"));
+    }
+
+    #[test]
+    fn test_parse_fullwidth_digits_and_letters() {
+        let text = "Ｔｅｘｔ　１\n\
+                    １．女士在做什么？\n\
+                    Ａ．看书　Ｂ．睡觉　Ｃ．跑步\n\
+                    答案：Ｃ\n\
+                    解析：听到脚步声。";
+
+        let result = ExerciseParser::parse(text, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "Text 1");
+        assert_eq!(result[0].questions.len(), 1);
+        let q = &result[0].questions[0];
+        assert_eq!(q.num, 1);
+        assert_eq!(q.stem, "女士在做什么？");
+        assert_eq!(q.options, vec!["A. 看书", "B. 睡觉", "C. 跑步"]);
+        assert_eq!(q.answer.as_deref(), Some("C"));
+        assert_eq!(q.explanation.as_deref(), Some("听到脚步声。"));
+    }
+
+    #[test]
+    fn test_parse_nbsp_crlf_and_unicode_line_separators() {
+        let text = "Text\u{00a0}1\r\n\
+                    1.\u{00a0}Where are the speakers?\u{2028}\
+                    A.\u{00a0}In a library.\r\n\
+                    B.\u{00a0}In a bank.\u{2028}\
+                    Key:\u{00a0}A";
+
+        let result = ExerciseParser::parse(text, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].questions.len(), 1);
+        let q = &result[0].questions[0];
+        assert_eq!(q.stem, "Where are the speakers?");
+        assert_eq!(q.options, vec!["A. In a library.", "B. In a bank."]);
+        assert_eq!(q.answer.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_parse_json_with_bom() {
+        let json = "\u{feff}[{\"material_ordinal\":1,\"title\":\"Passage 1\",\"questions\":[{\"num\":1,\"stem\":\"Who is the speaker?\",\"options\":[\"A. A teacher\",\"B. A student\"],\"answer\":\"A\"}]}]";
+
+        let result = ExerciseParser::parse(json, 1);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].title, "Passage 1");
+        assert_eq!(result[0].questions[0].stem, "Who is the speaker?");
+        assert_eq!(result[0].questions[0].answer.as_deref(), Some("A"));
     }
 }
