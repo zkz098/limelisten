@@ -705,6 +705,9 @@ export component MainWindow inherits Window {
     in-out property <int> exercise-modal-tab: 0; // 0 = 批量粘贴导入, 1 = 手动录入
     in-out property <string> exercise-import-text: "";
     in-out property <string> exercise-import-error: "";
+    in-out property <string> exercise-import-notice: "";
+    in-out property <bool> exercise-import-loading: false;
+    in-out property <bool> exercise-listening-only: true;
 
     // 手动录入/修改试题字段
     in-out property <bool> edit-q-is-editing: false;
@@ -748,6 +751,7 @@ export component MainWindow inherits Window {
     callback open-manual-exercise-modal();
     callback close-exercise-modal();
     callback submit-exercise-import(string);
+    callback pick-exercise-file();
     callback select-question-option(int, string);
     callback toggle-exercise-submitted();
     callback reset-exercise-exam();
@@ -2436,10 +2440,30 @@ export component MainWindow inherits Window {
 
                     // 说明提示
                     Text {
-                        text: "直接将听力试题粘贴至下方（支持从 Word、PDF 或网页复制）。系统将自动识别材料分组（如 Text 1/Passage 1）、题号、选项（A/B/C/D）与答案解析。也可以直接粘贴 JSON 格式。";
+                        text: "直接将听力试题粘贴至下方（支持从 Word、PDF 或网页复制），或从 .docx 文件导入。系统将自动识别材料分组（如 Text 1/Passage 1）、题号、选项（A/B/C/D）与答案解析。也可以直接粘贴 JSON 格式。完整套卷导入时可仅提取听力部分。";
                         font-size: 12px;
                         color: #64748b;
                         wrap: word-wrap;
+                    }
+
+                    HorizontalLayout {
+                        spacing: 10px;
+                        alignment: start;
+
+                        RiButton {
+                            icon: Ri.file-sub;
+                            text: root.exercise-import-loading ? "正在读取 Word 文档…" : "从 Word (.docx) 导入";
+                            enabled: !root.exercise-import-loading;
+                            clicked => { root.pick-exercise-file(); }
+                        }
+
+                        RiButton {
+                            icon: root.exercise-listening-only ? Ri.check : "";
+                            text: "仅提取听力部分";
+                            primary: root.exercise-listening-only;
+                            enabled: !root.exercise-import-loading;
+                            clicked => { root.exercise-listening-only = !root.exercise-listening-only; }
+                        }
                     }
 
                     // 多行输入框
@@ -2457,6 +2481,14 @@ export component MainWindow inherits Window {
                         font-weight: 600;
                     }
 
+                    if root.exercise-import-notice != "" : Text {
+                        text: root.exercise-import-notice;
+                        color: #d97706;
+                        font-size: 12px;
+                        font-weight: 600;
+                        wrap: word-wrap;
+                    }
+
                     // 底部操作按钮
                     HorizontalLayout {
                         spacing: 10px;
@@ -2471,7 +2503,7 @@ export component MainWindow inherits Window {
                             icon: Ri.check;
                             text: "解析并导入试题";
                             primary: true;
-                            enabled: root.exercise-import-text != "";
+                            enabled: root.exercise-import-text != "" && !root.exercise-import-loading;
                             clicked => { root.submit-exercise-import(root.exercise-import-text); }
                         }
                     }

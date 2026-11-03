@@ -69,6 +69,16 @@ enum Msg {
         msg: String,
     },
     FolderScanned(Vec<ScannedAudio>),
+    ExerciseFileLoaded {
+        file_name: String,
+        result: Result<ExerciseFileExtract, String>,
+    },
+}
+
+/// DOCX 提取结果（后台线程产出；文本最终填入导入框由用户确认）。
+struct ExerciseFileExtract {
+    text: String,
+    notice: Option<String>,
 }
 
 /// 文件夹扫描结果（后台线程产出；入库由 UI 线程单事务完成）。
@@ -1657,6 +1667,8 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_exercise_modal_tab(0);
             ui.set_exercise_import_error("".into());
+            ui.set_exercise_import_notice("".into());
+            ui.set_exercise_import_loading(false);
             ui.set_show_exercise_modal(true);
         });
     }
@@ -1677,6 +1689,8 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let Some(ui) = ui_weak.upgrade() else { return };
             ui.set_show_exercise_modal(false);
             ui.set_exercise_import_error("".into());
+            ui.set_exercise_import_notice("".into());
+            ui.set_exercise_import_loading(false);
             ui.set_edit_q_error("".into());
         });
     }
@@ -1924,6 +1938,56 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
     {
         let ui_weak = ui.as_weak();
+        let tx = tx.clone();
+        ui.on_pick_exercise_file(move || {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let Some(path) = rfd::FileDialog::new()
+                .add_filter("Word 文档", &["docx"])
+                .pick_file()
+            else {
+                return;
+            };
+            let file_name = path
+                .file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("Word 文档")
+                .to_string();
+            let listening_only = ui.get_exercise_listening_only();
+
+            ui.set_exercise_import_error("".into());
+            ui.set_exercise_import_notice("".into());
+            ui.set_exercise_import_loading(true);
+
+            let tx = tx.clone();
+            std::thread::spawn(move || {
+                let result = (|| -> Result<ExerciseFileExtract, String> {
+                    const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
+                    let meta = std::fs::metadata(&path).map_err(|e| e.to_string())?;
+                    if meta.len() > MAX_FILE_BYTES {
+                        return Err("文件过大（超过 64 MB）".into());
+                    }
+                    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+                    let text =
+                        lime_core::docx::extract_docx_text(&bytes).map_err(|e| e.to_string())?;
+                    if !listening_only {
+                        return Ok(ExerciseFileExtract { text, notice: None });
+                    }
+                    let section = lime_core::exercise_section::extract_listening_section(&text);
+                    let notice = (!section.found).then(|| {
+                        "未识别到听力部分标题，已导入全文，请手动检查是否包含阅读题".to_string()
+                    });
+                    Ok(ExerciseFileExtract {
+                        text: section.text,
+                        notice,
+                    })
+                })();
+                let _ = tx.send(Msg::ExerciseFileLoaded { file_name, result });
+            });
+        });
+    }
+
+    {
+        let ui_weak = ui.as_weak();
         let state = state.clone();
         let store = store.clone();
         ui.on_submit_exercise_import(move |text_slint| {
@@ -1971,7 +2035,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
 
             ui.set_show_exercise_modal(false);
             ui.set_exercise_import_error("".into());
+            ui.set_exercise_import_notice("".into());
             ui.set_exercise_import_text("".into());
+            ui.set_exercise_import_loading(false);
             ui.set_main_tab(1);
             ui.set_status(format!("成功导入试题：共 {total_q} 题").into());
         });
@@ -2193,6 +2259,32 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                                     Err(e) => {
                                         ui.set_status(format!("入库失败: {e}").into());
                                     }
+                                }
+                            }
+                        }
+                        Msg::ExerciseFileLoaded { file_name, result } => {
+                            ui.set_exercise_import_loading(false);
+                            match result {
+                                Ok(extracted) => {
+                                    ui.set_exercise_import_text(extracted.text.into());
+                                    ui.set_exercise_import_error("".into());
+                                    let notice = extracted.notice.unwrap_or_default();
+                                    let status = if notice.is_empty() {
+                                        format!("已读取 {file_name}，请检查提取结果后导入")
+                                    } else {
+                                        format!(
+                                            "已读取 {file_name}，但未识别到听力分区，已导入全文"
+                                        )
+                                    };
+                                    ui.set_exercise_import_notice(notice.into());
+                                    ui.set_status(status.into());
+                                }
+                                Err(e) => {
+                                    ui.set_exercise_import_notice("".into());
+                                    ui.set_exercise_import_error(
+                                        format!("读取 {file_name} 失败：{e}").into(),
+                                    );
+                                    ui.set_status("Word 文档读取失败".into());
                                 }
                             }
                         }

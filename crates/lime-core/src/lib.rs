@@ -18,8 +18,10 @@ pub enum Error {
 
 pub type Result<T> = std::result::Result<T, Error>;
 
+pub mod docx;
 pub mod exercise;
 pub mod exercise_parser;
+pub mod exercise_section;
 pub mod limed;
 pub use exercise::{ExerciseQuestion, MaterialExercise};
 pub use exercise_parser::ExerciseParser;

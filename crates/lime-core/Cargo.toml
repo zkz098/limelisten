@@ -11,3 +11,5 @@ serde_json.workspace = true
 thiserror.workspace = true
 zstd.workspace = true
 regex.workspace = true
+quick-xml.workspace = true
+zip.workspace = true
