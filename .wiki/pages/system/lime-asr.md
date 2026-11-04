@@ -2,8 +2,8 @@
 id: system/lime-asr
 title: lime-asr 转写驱动
 status: verified
-generated_at: 2026-11-01T03:27:10Z
-commit: a1601d77cd134732efe85d81a5f4f24bd317cf17
+generated_at: 2026-11-04T15:02:26Z
+commit: 0353c45b6b65ed31656a2151314df3059afa3a1f
 evidence:
 - path: crates/lime-asr/src/lib.rs
   lines:
@@ -133,10 +133,11 @@ evidence:
   snippet_sha1: a98112cdb866d69aedf96b5a0a800247c4710c75
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 462
-  - 581
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 472
+  - 591
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: c150bf6c0f4d8ce43c1fee23f0647a289df6464a
+  note: drift-projected L462-L581@0b142ece -> L472-L591 (similarity 1.00)
 - path: crates/lime-asr/src/lib.rs
   lines:
   - 191

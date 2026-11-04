@@ -2,63 +2,72 @@
 id: system/lime-core
 title: lime-core 领域模型
 status: verified
-generated_at: 2026-11-01T03:27:11Z
-commit: a1601d77cd134732efe85d81a5f4f24bd317cf17
+generated_at: 2026-11-04T15:02:26Z
+commit: 0353c45b6b65ed31656a2151314df3059afa3a1f
 evidence:
 - path: crates/lime-core/src/lib.rs
   lines:
   - 1
-  - 26
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
-  snippet_sha1: c9b8ff59433d12faa26f6b1f32384c5c2905f61c
+  - 28
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
+  snippet_sha1: 17ba2df989a6c0fffa605fdabdec4e191a72e36c
+  note: drift-projected L1-L26@82d2fd25 -> L1-L28 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
   - 5
   - 19
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: db7234f8f305740371bd158ccf565d8d7f64eac9
+  note: drift-projected L5-L19@82d2fd25 -> L5-L19 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 21
-  - 26
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
-  snippet_sha1: 22554c3968f837b682cf601b7771e0885343c03c
-- path: crates/lime-core/src/lib.rs
-  lines:
+  - 22
   - 28
-  - 44
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
+  snippet_sha1: 8bb1157969f3a2bb0e0f545953c43ba2df7c9494
+  note: drift-projected L21-L26@82d2fd25 -> L22-L28 (similarity 1.00)
+- path: crates/lime-core/src/lib.rs
+  lines:
+  - 30
+  - 46
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: 30e1e201df17e6afe2fbd6c607cadb8dc34fbb6c
+  note: drift-projected L28-L44@82d2fd25 -> L30-L46 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 54
-  - 77
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  - 56
+  - 79
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: e4fb1d2aa3e54a8016689fea87d64ebf4250e394
+  note: drift-projected L54-L77@82d2fd25 -> L56-L79 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 89
-  - 113
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
-  snippet_sha1: 24de3a611773b45c56885da9200210597be50eed
-- path: crates/lime-core/src/lib.rs
-  lines:
+  - 91
   - 115
-  - 137
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
+  snippet_sha1: 24de3a611773b45c56885da9200210597be50eed
+  note: drift-projected L89-L113@82d2fd25 -> L91-L115 (similarity 1.00)
+- path: crates/lime-core/src/lib.rs
+  lines:
+  - 117
+  - 139
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: fcb67f342af80c3689658c9a4a2ede0b0f64d6d3
+  note: drift-projected L115-L137@82d2fd25 -> L117-L139 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 214
-  - 257
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  - 216
+  - 259
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: 0e81c02a1bcda5fc6abe8636bdbf36fcdea8f91f
+  note: drift-projected L214-L257@82d2fd25 -> L216-L259 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 306
-  - 332
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  - 308
+  - 334
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: 2356de78babdf7e05a4b61f0b00623dd41e2cc91
+  note: drift-projected L306-L332@82d2fd25 -> L308-L334 (similarity 1.00)
 - path: crates/lime-core/src/exercise.rs
   lines:
   - 3
@@ -74,45 +83,52 @@ evidence:
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
   - 9
-  - 32
-  blob: 230527552b82419d7221ca9678f769f9060aece6
-  snippet_sha1: 92137e313b4745af26e484684da547cee003b0f8
+  - 33
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
+  snippet_sha1: 041c302325ce7b2a55768961dd0ec1e5083c07aa
+  note: drift-projected L9-L32@23052755 -> L9-L33 (similarity 0.96)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 38
-  - 59
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 39
+  - 60
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: 9e437afb90cf4bcef6b2aa518c649613f68d5ae0
+  note: drift-projected L38-L59@23052755 -> L39-L60 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 61
-  - 82
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 62
+  - 83
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: 4a0d8db89893fed263383ca17d6d935f73ad3666
+  note: drift-projected L61-L82@23052755 -> L62-L83 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 126
-  - 128
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 127
+  - 129
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: 999cc134b721e6f40634ce940551c614526503e6
+  note: drift-projected L126-L128@23052755 -> L127-L129 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 130
-  - 153
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 131
+  - 154
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: aee57843797f0815186706b1b77b6f156256f591
+  note: drift-projected L130-L153@23052755 -> L131-L154 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 239
-  - 249
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 240
+  - 250
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: 7f6e9ccd69b826289286355296f107a91a7a086d
+  note: drift-projected L239-L249@23052755 -> L240-L250 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 289
-  - 322
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 290
+  - 323
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: 93ab9d1343ff8e1d4cc6bac84b8f40c39fc4a8fb
+  note: drift-projected L289-L322@23052755 -> L290-L323 (similarity 1.00)
 - path: crates/lime-core/src/limed.rs
   lines:
   - 1
@@ -151,16 +167,18 @@ evidence:
   snippet_sha1: 1db68faa425bb03775f6e948e2b27cc656260ac2
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 19
-  - 28
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 20
+  - 29
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: f302f377faa6aae7834685603fb5d10c7d8166e9
+  note: drift-projected L19-L28@23052755 -> L20-L29 (similarity 1.00)
 - path: crates/lime-core/src/exercise_parser.rs
   lines:
-  - 132
-  - 132
-  blob: 230527552b82419d7221ca9678f769f9060aece6
+  - 133
+  - 133
+  blob: a3e6954f6e305a03b33739425369f9f93b017b93
   snippet_sha1: e1ea19e0acbef4829c1259d3b8d65a030378d3b5
+  note: drift-projected L132-L132@23052755 -> L133-L133 (similarity 1.00)
 - path: crates/lime-core/src/limed.rs
   lines:
   - 27

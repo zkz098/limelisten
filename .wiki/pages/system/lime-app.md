@@ -2,8 +2,8 @@
 id: system/lime-app
 title: lime-app 应用外壳
 status: verified
-generated_at: 2026-11-01T03:27:11Z
-commit: a1601d77cd134732efe85d81a5f4f24bd317cf17
+generated_at: 2026-11-04T15:02:26Z
+commit: 0353c45b6b65ed31656a2151314df3059afa3a1f
 evidence:
 - path: crates/lime-app/src/main.rs
   lines:
@@ -63,8 +63,9 @@ evidence:
   lines:
   - 10
   - 10
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: f27f53a8ed526be233ecca148db0aeb329190834
+  note: drift-projected L10-L10@0b142ece -> L10-L10 (similarity 1.00)
 - path: crates/lime-app/src/cli.rs
   lines:
   - 1
@@ -115,58 +116,67 @@ evidence:
   snippet_sha1: f251cba4e549e7e376d25a0a136838de7c5148b1
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 778
-  - 815
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 788
+  - 825
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 53524079305d598b76643d30e8e923ade0f94b61
+  note: drift-projected L778-L815@0b142ece -> L788-L825 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 84
-  - 123
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 94
+  - 133
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 317f46a4ff4dde9d4c43e23424c48ade4e045199
+  note: drift-projected L84-L123@0b142ece -> L94-L133 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
   - 31
-  - 72
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
-  snippet_sha1: 83e3a2adb59fbbc4a1b4f04b6db697042284015c
+  - 82
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
+  snippet_sha1: a59116096e2e8741d0a2058f82ff1a8c1a96c8e4
+  note: drift-projected L31-L72@0b142ece -> L31-L82 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2280
-  - 2295
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2372
+  - 2387
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 8dc1ec06d878b0c21af7c3ed114942caf8b3cd91
+  note: drift-projected L2280-L2295@0b142ece -> L2372-L2387 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2067
-  - 2084
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2133
+  - 2150
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: e7bcaa8948d1f804b286e2e5b9882aaf3797f5cd
+  note: drift-projected L2067-L2084@0b142ece -> L2133-L2150 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2381
-  - 2393
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2473
+  - 2485
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 9ae1d96e7dbca5ae4233f040477d60938523ca55
+  note: drift-projected L2381-L2393@0b142ece -> L2473-L2485 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2820
-  - 2856
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2912
+  - 2948
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 9721ea2c0a0da99212179092b4d56184c00ec2f1
+  note: drift-projected L2820-L2856@0b142ece -> L2912-L2948 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 917
-  - 975
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 927
+  - 985
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: e272085a2dec9642426f49bc557282e910b509f3
+  note: drift-projected L917-L975@0b142ece -> L927-L985 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 1048
-  - 1087
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 1058
+  - 1097
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: c8d5338dc11713d72f6bf75c74b4a57d8ea4ae66
+  note: drift-projected L1048-L1087@0b142ece -> L1058-L1097 (similarity 1.00)
 - path: crates/lime-audio/src/engine.rs
   lines:
   - 99
@@ -175,10 +185,11 @@ evidence:
   snippet_sha1: 184054d95d65702fe22b708ae0cd240f20e60c83
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 780
-  - 787
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 790
+  - 797
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 133ee7b6985f1931bfebccda5ec11444c990cf6e
+  note: drift-projected L780-L787@0b142ece -> L790-L797 (similarity 1.00)
 - path: crates/lime-store/src/lib.rs
   lines:
   - 878
@@ -187,22 +198,25 @@ evidence:
   snippet_sha1: 1f4027076ad557019cdf06892f24208bd5e9cca8
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2522
-  - 2555
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2614
+  - 2647
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 3666645020ab6aa2e762a0f6c77b78de47420d94
+  note: drift-projected L2522-L2555@0b142ece -> L2614-L2647 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2635
-  - 2641
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2727
+  - 2733
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 25b751c0cb4d9c26d7d3755342fa7d9111f34445
+  note: drift-projected L2635-L2641@0b142ece -> L2727-L2733 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2720
-  - 2732
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2812
+  - 2824
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 17ea0e2e5aa4daadd10aa7c483cfe12149e50f64
+  note: drift-projected L2720-L2732@0b142ece -> L2812-L2824 (similarity 1.00)
 - path: xtask/src/main.rs
   lines:
   - 13

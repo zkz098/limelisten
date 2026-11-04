@@ -2,8 +2,8 @@
 id: architecture/overview
 title: LimeListen 架构总览
 status: verified
-generated_at: 2026-11-01T03:27:08Z
-commit: a1601d77cd134732efe85d81a5f4f24bd317cf17
+generated_at: 2026-11-04T15:02:26Z
+commit: 0353c45b6b65ed31656a2151314df3059afa3a1f
 evidence:
 - path: crates/lime-app/src/main.rs
   lines:
@@ -15,14 +15,16 @@ evidence:
   lines:
   - 1
   - 8
-  blob: e25cc8b508e65c43d10278ac4240381609b5d169
+  blob: 1d750a8fe4b20e787252870f7a48cb1bdf9c21cc
   snippet_sha1: 9c2dc54298a30af904e663602540d0232b1187a9
+  note: drift-projected L1-L8@e25cc8b5 -> L1-L8 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
   - 1
-  - 26
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
-  snippet_sha1: c9b8ff59433d12faa26f6b1f32384c5c2905f61c
+  - 28
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
+  snippet_sha1: 17ba2df989a6c0fffa605fdabdec4e191a72e36c
+  note: drift-projected L1-L26@82d2fd25 -> L1-L28 (similarity 1.00)
 - path: crates/lime-analyze/src/lib.rs
   lines:
   - 1
@@ -49,22 +51,25 @@ evidence:
   snippet_sha1: b8e1353f18aa86d7300356784bd6385af71f3f6f
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 778
-  - 815
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 788
+  - 825
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 53524079305d598b76643d30e8e923ade0f94b61
+  note: drift-projected L778-L815@0b142ece -> L788-L825 (similarity 1.00)
 - path: crates/lime-core/src/lib.rs
   lines:
   - 5
-  - 26
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
-  snippet_sha1: 5614bb400708ca0cdc29be1345c152590649efc0
+  - 28
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
+  snippet_sha1: a87a7f82d65115a74807487c56c19261001ea6c0
+  note: drift-projected L5-L26@82d2fd25 -> L5-L28 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2522
-  - 2555
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2614
+  - 2647
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 3666645020ab6aa2e762a0f6c77b78de47420d94
+  note: drift-projected L2522-L2555@0b142ece -> L2614-L2647 (similarity 1.00)
 - path: crates/lime-app/src/cli.rs
   lines:
   - 422
@@ -97,10 +102,11 @@ evidence:
   snippet_sha1: cd108c1ed8bdf7d8485dc1c5427ecea4f5734d23
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2280
-  - 2295
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2372
+  - 2387
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 8dc1ec06d878b0c21af7c3ed114942caf8b3cd91
+  note: drift-projected L2280-L2295@0b142ece -> L2372-L2387 (similarity 1.00)
 - path: crates/lime-audio/src/decode.rs
   lines:
   - 25
@@ -127,10 +133,11 @@ evidence:
   snippet_sha1: 3584d10f3bd1405854785eb1b508309fef42f738
 - path: crates/lime-core/src/lib.rs
   lines:
-  - 89
-  - 137
-  blob: 82d2fd25773ca1d1f49475d5d61de3347d225f2b
+  - 91
+  - 139
+  blob: c1a49643858da05e0d0f41282d05bc8e756e2c43
   snippet_sha1: 85a380ad4833eb8905a9f83165e6471489ec2eff
+  note: drift-projected L89-L137@82d2fd25 -> L91-L139 (similarity 1.00)
 - path: crates/lime-app/src/paths.rs
   lines:
   - 22

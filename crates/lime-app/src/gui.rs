@@ -3278,9 +3278,17 @@ fn refresh_exercise_ui(ui: &MainWindow, st: &GuiState) {
 
     let cur_mat_ord = st.active_material_ordinal;
     let cur_mat = st
-        .exercises
-        .iter()
-        .find(|m| m.material_ordinal == cur_mat_ord)
+        .active_question_num
+        .and_then(|q_num| {
+            st.exercises
+                .iter()
+                .find(|m| m.questions.iter().any(|q| q.num == q_num))
+        })
+        .or_else(|| {
+            st.exercises
+                .iter()
+                .find(|m| m.material_ordinal == cur_mat_ord)
+        })
         .or_else(|| st.exercises.first());
 
     let Some(mat) = cur_mat else {

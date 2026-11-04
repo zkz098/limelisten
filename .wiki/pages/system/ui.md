@@ -2,8 +2,8 @@
 id: system/ui
 title: Slint 界面结构
 status: verified
-generated_at: 2026-11-01T03:28:05Z
-commit: a1601d77cd134732efe85d81a5f4f24bd317cf17
+generated_at: 2026-11-04T15:02:26Z
+commit: 0353c45b6b65ed31656a2151314df3059afa3a1f
 evidence:
 - path: crates/lime-app/build.rs
   lines:
@@ -15,86 +15,100 @@ evidence:
   lines:
   - 1
   - 46
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 551c084f0792c82297ed3eecc258b6816559f091
+  note: drift-projected L1-L46@76f960ce -> L1-L46 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 47
   - 60
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 22c8f16356b6135fcf865df33ca39fa72d95b0b5
+  note: drift-projected L47-L60@76f960ce -> L47-L60 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 96
   - 108
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: fe757262e02ff12fde96b11fe8f0a086de4e672a
+  note: drift-projected L96-L108@76f960ce -> L96-L108 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 109
   - 112
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: afd8f5040f1aa22fa3f09518a7e4ab1768989471
+  note: drift-projected L109-L112@76f960ce -> L109-L112 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 549
   - 554
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 203d331f43633884664659fda8f291c8e1a7f8a4
+  note: drift-projected L549-L554@76f960ce -> L549-L554 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 222
   - 234
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: dd7d0ef5542e6f0794a4b994c734062953cee3be
+  note: drift-projected L222-L234@76f960ce -> L222-L234 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 642
   - 706
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 3061ca0287bd16d9002ab8832415e7ea323424f5
+  note: drift-projected L642-L706@76f960ce -> L642-L706 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 657
   - 657
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: f63751fadfa2434067cddf94633920bfec0617a7
+  note: drift-projected L657-L657@76f960ce -> L657-L657 (similarity 1.00)
 - path: ui/app.slint
   lines:
   - 699
   - 706
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 4b5628730a7878678ebc374757403869ca9b86b3
+  note: drift-projected L699-L706@76f960ce -> L699-L706 (similarity 1.00)
 - path: ui/app.slint
   lines:
-  - 725
-  - 778
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
-  snippet_sha1: c538355776ef83cac0aa7ea31c1f9c9fae0cc7f5
+  - 728
+  - 782
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
+  snippet_sha1: e23ebfbf903041deade1b2cd538c98a1bd5db05f
+  note: drift-projected L725-L778@76f960ce -> L728-L782 (similarity 1.00)
 - path: ui/app.slint
   lines:
-  - 959
-  - 1013
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  - 963
+  - 1017
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: 9adb426322b0ef31448b82bfeb816199e9acc22b
+  note: drift-projected L959-L1013@76f960ce -> L963-L1017 (similarity 1.00)
 - path: ui/app.slint
   lines:
-  - 1340
-  - 1500
-  blob: 76f960cebc58f543eb157c44f392d2f139636e91
+  - 1344
+  - 1504
+  blob: db1fc171cb4e7f8c2ea59f158a1a703e516eb8d9
   snippet_sha1: a2ff19c0259822c3a609e592725ad1e96d42498a
+  note: drift-projected L1340-L1500@76f960ce -> L1344-L1504 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 803
-  - 824
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 813
+  - 834
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: cf6136ade56585d87ba0fe347b25031358ff5e43
+  note: drift-projected L803-L824@0b142ece -> L813-L834 (similarity 1.00)
 - path: crates/lime-app/src/gui.rs
   lines:
-  - 2280
-  - 2295
-  blob: 0b142eceebeae8a925819af6a611337adc36d1f0
+  - 2372
+  - 2387
+  blob: 2c2850b4a73405d7f372e9cee677941d6143d651
   snippet_sha1: 8dc1ec06d878b0c21af7c3ed114942caf8b3cd91
+  note: drift-projected L2280-L2295@0b142ece -> L2372-L2387 (similarity 1.00)
 type: system
 ---
 # 职责

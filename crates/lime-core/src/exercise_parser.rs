@@ -37,8 +37,21 @@ impl ExerciseParser {
         let lines: Vec<&str> = text.lines().map(|l| l.trim()).collect();
 
         // 正则表达式定义
-        // 材料标题行，例如: "Text 1", "Passage 2", "Section A", "材料 1", "第一节"
-        let re_mat = Regex::new(r"(?i)^(?:Text|Passage|Section|Conversation|材料|第[一二三四五六七八九十0-9]+节|听力材料)\s*([0-9A-Za-z一二三四五六七八九十]+)?.*$").unwrap();
+        // 材料标题行，支持常见的英文与中文各类标题形式：
+        // 1. 标准前缀: "Text 1", "Passage 2", "Section A", "Conversation 1", "Dialogue 1", "材料 1", "听力材料"
+        // 2. 中文节/部分: "第一节", "第二节", "第一部分" 等
+        // 3. 英文 Part: "Part I", "Part A", "Part 1" 等
+        // 4. 听力引导语: "听下面一段对话，回答第6至第8小题。", "听下面一段独白...", "听下面5段对话..."
+        // 5. 英文引导语: "Questions 6 to 8 are based on...", "Listen to..."
+        // 6. 顶层听力总标题: "一. 听力练习", "一、听力理解"
+        let re_mat = Regex::new(concat!(
+            r"(?i)^(?:Text|Passage|Section|Conversation|Dialogue|材料|听力材料)\s*([0-9A-Za-z一二三四五六七八九十]+)?.*$|",
+            r"^第\s*[一二三四五六七八九十0-9]+\s*[节部分].*$|",
+            r"(?i)^Part\s+[A-Za-z0-9IVXLC]+.*$|",
+            r"^听(?:下面|第)\s*[0-9一二三四五六七八九十两\s]*段?\s*(?:对话|独白|录音|材料|话).*$|",
+            r"(?i)^Questions?\s+\d+\s*(?:to|-|—)\s*\d+\s+are\s+based\s+on.*$|",
+            r"^[一二三四五六七八九十]+[、.．:：\s]\s*听力.*$"
+        )).unwrap();
 
         // 题干行，例如: "1. What is the woman doing?", "第 2 题: ...", "3、..."
         let re_stem = Regex::new(r"^(?:第\s*)?(\d+)[\.、\s\)\:\-]+\s*(.+)$").unwrap();
@@ -129,8 +142,8 @@ impl ExerciseParser {
             }
 
             // 1. 判断是否是材料分割行
-            // 条件：匹配 re_mat 且不包含题号特征，且长度不过长（<= 30 字符）
-            if line.len() <= 30 && re_mat.is_match(line) && !re_stem.is_match(line) {
+            // 条件：匹配 re_mat 且不包含题号特征，且长度不过长（<= 80 Unicode 字符，避免中文 UTF-8 字节溢出）
+            if line.chars().count() <= 80 && re_mat.is_match(line) && !re_stem.is_match(line) {
                 flush_current_question(
                     &mut cur_q_num,
                     &mut cur_q_stem,
@@ -149,7 +162,9 @@ impl ExerciseParser {
                     };
                     groups.push((title, std::mem::take(&mut cur_questions)));
                 }
-                cur_mat_title = line.to_string();
+                cur_mat_title = line
+                    .trim_end_matches(['。', '！', '!', '；', ';', '.'])
+                    .to_string();
                 continue;
             }
 
@@ -240,6 +255,23 @@ impl ExerciseParser {
         if groups.len() == 1 && groups[0].0 == "材料 1" && known_material_count > 1 {
             let (_, questions) = groups.remove(0);
             return Self::group_questions_into_materials(questions, known_material_count);
+        }
+
+        // 高考/中考听力典型排版：第一节声明了 N 道小题（如 1~5 题），后随若干长对话材料组。
+        // 若「第一组题数 + 剩余组数 == known_material_count」，说明音频中把第一节的每一小题
+        // 分别切分为了独立短材料，此时将第一组的题目按单题拆分，使之与音频材料完全对齐。
+        if groups.len() > 1 && known_material_count > groups.len() {
+            let first_q_count = groups[0].1.len();
+            if first_q_count > 1 && (first_q_count + groups.len() - 1) == known_material_count {
+                let (first_title, first_questions) = groups.remove(0);
+                let mut expanded = Vec::with_capacity(known_material_count);
+                for q in first_questions {
+                    let title = format!("{first_title} - 第{}题", q.num);
+                    expanded.push((title, vec![q]));
+                }
+                expanded.extend(groups);
+                groups = expanded;
+            }
         }
 
         // 构建带有连续 material_ordinal 的 MaterialExercise 列表
@@ -589,5 +621,87 @@ A. Opt 1   B. Opt 2
         assert_eq!(result[0].title, "Passage 1");
         assert_eq!(result[0].questions[0].stem, "Who is the speaker?");
         assert_eq!(result[0].questions[0].answer.as_deref(), Some("A"));
+    }
+
+    #[test]
+    fn test_parse_chinese_standard_exam_listening_paper() {
+        let text = r#"一. 听力练习
+第一节（共5小题；每小题1分，满分5分）
+1．What do we know about Jim?
+A．He has a leg injury.									B．He withdrew from the football team.
+C．He spent his holiday with his teammates.
+2．What is the woman?
+A．Working in sales.	B．Working with people.		C．Working with numbers.
+3．What happened to the man last week?
+A．He lost his job.	B．He bought a newspaper.	C．He refused his co-workers.
+4．Where does the woman live now?
+A．In Miami.	B．In New York.			C．In Los Angeles.
+5．What probably is the man?
+A．A teacher.	B．A reporter.			C．A student.
+第二节（共10小题；每小题1.5分，满分15分）
+听下面一段对话，回答第6至第8小题。
+6．What did the woman feel scared of at university at the beginning?
+A．Taking tests.	B．Leaving home.			C．Communicating with new people.
+7．What is the woman studying at university?
+A．English.	B．French.			C．Russian.
+8．What does the man want to be?
+A．A teacher.	B．A translator.			C．A historian.
+听下面一段对话，回答第9至第11小题。
+9．What happened to the man on his journey?
+A．He was late arriving.									B．He couldn’t find his bags.	
+C．He lost his way to the destination.
+10．How long has the man been traveling?
+A．For 17 hours.	B．For 20 hours.			C．For 24 hours.
+11．Why did the hotel change the man’s room?
+A．He paid to have a better room.						B．The hotel has made a mistake.
+C．He has experienced a tough time.
+听下面一段独白，回答第12至第15小题。
+12．What did the speaker do before the year 2012?
+A．A fitness coach.	       B．A chess player.			C．A marathon runner.
+13．Why was the 2016 Olympics important for the speaker?
+A．He was motivated by Bolt.  B．He broke a world record.	C．He won fifth place.
+14．Which is the hardest for the speaker?
+A．Getting over an injury.     B．Doing strength training 	C．Representing Botswana.
+15．What is the speaker mainly talking about?
+A．His plan to go for the gold.					B．His experience on the track.	
+C．His love for his home country.
+"#;
+        // 未指定多材料时保留 4 个显式材料组
+        let result = ExerciseParser::parse(text, 1);
+        assert_eq!(result.len(), 4);
+        assert!(result[0].title.contains("第一节"));
+        assert_eq!(result[0].questions.len(), 5);
+        assert_eq!(result[0].questions[0].num, 1);
+        assert_eq!(result[0].questions[4].num, 5);
+
+        assert_eq!(result[1].title, "听下面一段对话，回答第6至第8小题");
+        assert_eq!(result[1].questions.len(), 3);
+        assert_eq!(result[1].questions[0].num, 6);
+        assert_eq!(result[1].questions[2].num, 8);
+
+        assert_eq!(result[2].title, "听下面一段对话，回答第9至第11小题");
+        assert_eq!(result[2].questions.len(), 3);
+        assert_eq!(result[2].questions[0].num, 9);
+        assert_eq!(result[2].questions[2].num, 11);
+
+        assert_eq!(result[3].title, "听下面一段独白，回答第12至第15小题");
+        assert_eq!(result[3].questions.len(), 4);
+        assert_eq!(result[3].questions[0].num, 12);
+        assert_eq!(result[3].questions[3].num, 15);
+
+        // 当已知音频切分为 8 个材料时（前 5 题为单题短对话，后 3 段长材料），智能展开第一节
+        let result_8 = ExerciseParser::parse(text, 8);
+        assert_eq!(result_8.len(), 8);
+        for i in 1..=5 {
+            assert_eq!(result_8[i - 1].material_ordinal, i as u32);
+            assert_eq!(result_8[i - 1].questions.len(), 1);
+            assert_eq!(result_8[i - 1].questions[0].num, i as u32);
+        }
+        assert_eq!(result_8[5].material_ordinal, 6);
+        assert_eq!(result_8[5].questions.len(), 3);
+        assert_eq!(result_8[6].material_ordinal, 7);
+        assert_eq!(result_8[6].questions.len(), 3);
+        assert_eq!(result_8[7].material_ordinal, 8);
+        assert_eq!(result_8[7].questions.len(), 4);
     }
 }
