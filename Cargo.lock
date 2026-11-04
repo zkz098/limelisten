@@ -2729,7 +2729,7 @@ dependencies = [
 
 [[package]]
 name = "lime-analyze"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "hound",
  "lime-core",
@@ -2738,7 +2738,7 @@ dependencies = [
 
 [[package]]
 name = "lime-app"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -2756,7 +2756,7 @@ dependencies = [
 
 [[package]]
 name = "lime-asr"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lime-analyze",
  "lime-core",
@@ -2766,7 +2766,7 @@ dependencies = [
 
 [[package]]
 name = "lime-audio"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -2778,7 +2778,7 @@ dependencies = [
 
 [[package]]
 name = "lime-core"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "quick-xml 0.42.0",
  "regex",
@@ -2791,7 +2791,7 @@ dependencies = [
 
 [[package]]
 name = "lime-store"
-version = "0.1.3"
+version = "0.1.4"
 dependencies = [
  "lime-core",
  "rusqlite",
@@ -6214,7 +6214,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.1.3"
+version = "0.1.4"
 
 [[package]]
 name = "yazi"
