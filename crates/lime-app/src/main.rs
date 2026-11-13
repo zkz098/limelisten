@@ -5,7 +5,7 @@
 //! 无界面模式（自动化验收用）：
 //!   limelisten --analyze  <音频>              切分报告（静音结构 + 叮咚 + 两级章节）
 //!   limelisten --assert   <音频>...           P0 自动断言（exit 0 = 全绿）
-//!   limelisten --transcribe <音频> [句数]     只跑 ASR 链路并打印吸附前后对比
+//!   limelisten --transcribe <音频> \[句数\]     只跑 ASR 链路并打印吸附前后对比
 //!   limelisten --playtest <音频>              播放引擎自测（真实开卡）
 //!   limelisten --chapters <音频>              打印本地库里的两级章节树（核对章节顺序）
 //!   limelisten <音频>                         直接打开该文件启动界面

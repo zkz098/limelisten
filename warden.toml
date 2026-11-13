@@ -1,0 +1,83 @@
+# cargo-warden 质量门控配置
+
+baseline = "warden-baseline.json"
+
+[dag]
+roots = [
+    "crates/lime-analyze/src",
+    "crates/lime-app/src",
+    "crates/lime-asr/src",
+    "crates/lime-audio/src",
+    "crates/lime-core/src",
+    "crates/lime-store/src",
+    "xtask/src",
+]
+forbid_imports = ["gui"]
+
+# 工作区 crate 分层边界（cargo-warden >= 0.2.1 生效，0.2.0 自动忽略）
+[dag.workspace]
+include_dev_dependencies = false
+check_version_conflicts = false
+
+[[dag.workspace.layers]]
+name = "domain"
+crates = ["lime-core"]
+allow = []
+
+[[dag.workspace.layers]]
+name = "engine"
+crates = ["lime-analyze", "lime-audio", "lime-store"]
+allow = ["domain"]
+
+[[dag.workspace.layers]]
+name = "asr"
+crates = ["lime-asr"]
+allow = ["domain", "lime-analyze"]
+
+[[dag.workspace.layers]]
+name = "app"
+crates = ["lime-app"]
+allow = ["domain", "engine", "asr"]
+
+[[dag.workspace.layers]]
+name = "tooling"
+crates = ["xtask"]
+allow = []
+
+[ci_parity]
+workflow = ".github/workflows/ci.yml"
+test_patterns = ["cargo test"]
+ignore_crates = []
+fanout_crates = []
+
+[slint_theme]
+ui_dir = "ui"
+out_file = "ui/theme.slint"
+unchanged_colors = ["ffffff", "000000", "6b7280"]
+respect_gitignore = true
+
+[complexity]
+max = 25
+paths = ["crates", "xtask"]
+ignore_tests = true
+ignore = ["target"]
+respect_gitignore = true
+
+[file_length]
+max_lines = 800
+extensions = ["rs", "slint"]
+paths = ["crates", "xtask", "ui"]
+ignore = ["target", "tests"]
+mode = "physical"
+respect_gitignore = true
+
+[check]
+fmt = true
+clippy = false
+doc = false
+parallel = true
+
+[gate]
+include_checks = true
+parallel = true
+test_groups = []

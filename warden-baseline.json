@@ -1,0 +1,463 @@
+{
+  "version": 1,
+  "entries": {
+    "complexity:crates/lime-analyze/src/chime.rs:detect_band": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-analyze/src/chime.rs",
+      "message": "crates/lime-analyze/src/chime.rs:230 - `detect_band()` score: 29 (> 25)",
+      "max_value": 29
+    },
+    "complexity:crates/lime-analyze/src/lib.rs:build_chapters": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-analyze/src/lib.rs",
+      "message": "crates/lime-analyze/src/lib.rs:415 - `build_chapters()` score: 29 (> 25)",
+      "max_value": 29
+    },
+    "complexity:crates/lime-analyze/src/repeat.rs:merge_repeated_materials_with": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-analyze/src/repeat.rs",
+      "message": "crates/lime-analyze/src/repeat.rs:58 - `merge_repeated_materials_with()` score: 33 (> 25)",
+      "max_value": 33
+    },
+    "complexity:crates/lime-analyze/src/snap.rs:align_markers_dtw": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-analyze/src/snap.rs",
+      "message": "crates/lime-analyze/src/snap.rs:303 - `align_markers_dtw()` score: 56 (> 25)",
+      "max_value": 56
+    },
+    "complexity:crates/lime-app/src/cli.rs:analyze_streaming": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-app/src/cli.rs",
+      "message": "crates/lime-app/src/cli.rs:34 - `analyze_streaming()` score: 32 (> 25)",
+      "max_value": 32
+    },
+    "complexity:crates/lime-app/src/cli.rs:cmd_benchmark": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-app/src/cli.rs",
+      "message": "crates/lime-app/src/cli.rs:1009 - `cmd_benchmark()` score: 55 (> 25)",
+      "max_value": 55
+    },
+    "complexity:crates/lime-app/src/gui.rs:load_or_analyze_media": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-app/src/gui.rs",
+      "message": "crates/lime-app/src/gui.rs:2516 - `load_or_analyze_media()` score: 90 (> 25)",
+      "max_value": 90
+    },
+    "complexity:crates/lime-app/src/gui.rs:run_gui_benchmark": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-app/src/gui.rs",
+      "message": "crates/lime-app/src/gui.rs:611 - `run_gui_benchmark()` score: 49 (> 25)",
+      "max_value": 49
+    },
+    "complexity:crates/lime-app/src/gui.rs:run_with": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-app/src/gui.rs",
+      "message": "crates/lime-app/src/gui.rs:788 - `run_with()` score: 372 (> 25)",
+      "max_value": 372
+    },
+    "complexity:crates/lime-audio/examples/stretch_debug.rs:main": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-audio/examples/stretch_debug.rs",
+      "message": "crates/lime-audio/examples/stretch_debug.rs:4 - `main()` score: 30 (> 25)",
+      "max_value": 30
+    },
+    "complexity:crates/lime-audio/src/engine.rs:build_typed": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-audio/src/engine.rs",
+      "message": "crates/lime-audio/src/engine.rs:264 - `build_typed()` score: 32 (> 25)",
+      "max_value": 32
+    },
+    "complexity:crates/lime-audio/src/engine.rs:worker_loop": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-audio/src/engine.rs",
+      "message": "crates/lime-audio/src/engine.rs:343 - `worker_loop()` score: 90 (> 25)",
+      "max_value": 90
+    },
+    "complexity:crates/lime-audio/src/render.rs:render": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-audio/src/render.rs",
+      "message": "crates/lime-audio/src/render.rs:37 - `render()` score: 41 (> 25)",
+      "max_value": 41
+    },
+    "complexity:crates/lime-core/src/docx.rs:parse_document_xml": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-core/src/docx.rs",
+      "message": "crates/lime-core/src/docx.rs:55 - `parse_document_xml()` score: 33 (> 25)",
+      "max_value": 33
+    },
+    "complexity:crates/lime-core/src/exercise_parser.rs:parse_text": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "crates/lime-core/src/exercise_parser.rs",
+      "message": "crates/lime-core/src/exercise_parser.rs:36 - `parse_text()` score: 93 (> 25)",
+      "max_value": 93
+    },
+    "complexity:xtask/src/main.rs:main": {
+      "rule_id": "warden/complexity",
+      "check": "complexity",
+      "file": "xtask/src/main.rs",
+      "message": "xtask/src/main.rs:129 - `main()` score: 26 (> 25)",
+      "max_value": 26
+    },
+    "file-length:crates/lime-app/src/cli.rs": {
+      "rule_id": "warden/file-length",
+      "check": "file-length",
+      "file": "crates/lime-app/src/cli.rs",
+      "message": "crates/lime-app/src/cli.rs has 1343 physical lines (> 800)",
+      "max_value": 1343
+    },
+    "file-length:crates/lime-app/src/gui.rs": {
+      "rule_id": "warden/file-length",
+      "check": "file-length",
+      "file": "crates/lime-app/src/gui.rs",
+      "message": "crates/lime-app/src/gui.rs has 3729 physical lines (> 800)",
+      "max_value": 3729
+    },
+    "file-length:crates/lime-store/src/lib.rs": {
+      "rule_id": "warden/file-length",
+      "check": "file-length",
+      "file": "crates/lime-store/src/lib.rs",
+      "message": "crates/lime-store/src/lib.rs has 1331 physical lines (> 800)",
+      "max_value": 1331
+    },
+    "file-length:ui/app.slint": {
+      "rule_id": "warden/file-length",
+      "check": "file-length",
+      "file": "ui/app.slint",
+      "message": "ui/app.slint has 2883 physical lines (> 800)",
+      "max_value": 2883
+    },
+    "slint-theme:ui/app.slint:0284c7": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #0284c7 at ui/app.slint:1988"
+    },
+    "slint-theme:ui/app.slint:065f46": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #065f46 at ui/app.slint:1881"
+    },
+    "slint-theme:ui/app.slint:0f172a": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #0f172a at ui/app.slint:2735"
+    },
+    "slint-theme:ui/app.slint:0f172a66": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #0f172a66 at ui/app.slint:2312"
+    },
+    "slint-theme:ui/app.slint:15803d": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #15803d at ui/app.slint:2248"
+    },
+    "slint-theme:ui/app.slint:16a34a": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #16a34a at ui/app.slint:1971"
+    },
+    "slint-theme:ui/app.slint:1d4ed8": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #1d4ed8 at ui/app.slint:2406"
+    },
+    "slint-theme:ui/app.slint:1e293b": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #1e293b at ui/app.slint:2819"
+    },
+    "slint-theme:ui/app.slint:22c55e": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #22c55e at ui/app.slint:471"
+    },
+    "slint-theme:ui/app.slint:2563eb": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #2563eb at ui/app.slint:2814"
+    },
+    "slint-theme:ui/app.slint:334155": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #334155 at ui/app.slint:2839"
+    },
+    "slint-theme:ui/app.slint:3730a3": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #3730a3 at ui/app.slint:1881"
+    },
+    "slint-theme:ui/app.slint:3b82f6": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #3b82f6 at ui/app.slint:2812"
+    },
+    "slint-theme:ui/app.slint:4338ca": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #4338ca at ui/app.slint:1124"
+    },
+    "slint-theme:ui/app.slint:475569": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #475569 at ui/app.slint:1082"
+    },
+    "slint-theme:ui/app.slint:4f46e5": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #4f46e5 at ui/app.slint:1101"
+    },
+    "slint-theme:ui/app.slint:60a5fa": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #60a5fa at ui/app.slint:1060"
+    },
+    "slint-theme:ui/app.slint:64748b": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #64748b at ui/app.slint:2735"
+    },
+    "slint-theme:ui/app.slint:6d28d9": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #6d28d9 at ui/app.slint:1881"
+    },
+    "slint-theme:ui/app.slint:854d0e": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #854d0e at ui/app.slint:537"
+    },
+    "slint-theme:ui/app.slint:86efac": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #86efac at ui/app.slint:1861"
+    },
+    "slint-theme:ui/app.slint:92400e": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #92400e at ui/app.slint:1881"
+    },
+    "slint-theme:ui/app.slint:94a3b8": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #94a3b8 at ui/app.slint:2730"
+    },
+    "slint-theme:ui/app.slint:9a3412": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #9a3412 at ui/app.slint:1756"
+    },
+    "slint-theme:ui/app.slint:b45309": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #b45309 at ui/app.slint:1435"
+    },
+    "slint-theme:ui/app.slint:b91c1c": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #b91c1c at ui/app.slint:503"
+    },
+    "slint-theme:ui/app.slint:bbf7d0": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #bbf7d0 at ui/app.slint:1911"
+    },
+    "slint-theme:ui/app.slint:bfdbfe": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #bfdbfe at ui/app.slint:1227"
+    },
+    "slint-theme:ui/app.slint:ca8a04": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #ca8a04 at ui/app.slint:530"
+    },
+    "slint-theme:ui/app.slint:cbd5e1": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #cbd5e1 at ui/app.slint:2814"
+    },
+    "slint-theme:ui/app.slint:d1fae5": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #d1fae5 at ui/app.slint:1876"
+    },
+    "slint-theme:ui/app.slint:d97706": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #d97706 at ui/app.slint:2486"
+    },
+    "slint-theme:ui/app.slint:dbeafe": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #dbeafe at ui/app.slint:2097"
+    },
+    "slint-theme:ui/app.slint:dc2626": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #dc2626 at ui/app.slint:2850"
+    },
+    "slint-theme:ui/app.slint:dcfce7": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #dcfce7 at ui/app.slint:2238"
+    },
+    "slint-theme:ui/app.slint:e0e7ff": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #e0e7ff at ui/app.slint:1876"
+    },
+    "slint-theme:ui/app.slint:e0f2fe": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #e0f2fe at ui/app.slint:1945"
+    },
+    "slint-theme:ui/app.slint:e2e8f0": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #e2e8f0 at ui/app.slint:2728"
+    },
+    "slint-theme:ui/app.slint:ea580c": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #ea580c at ui/app.slint:1742"
+    },
+    "slint-theme:ui/app.slint:ede9fe": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #ede9fe at ui/app.slint:1876"
+    },
+    "slint-theme:ui/app.slint:ef4444": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #ef4444 at ui/app.slint:471"
+    },
+    "slint-theme:ui/app.slint:eff6ff": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #eff6ff at ui/app.slint:1224"
+    },
+    "slint-theme:ui/app.slint:f0f7ff": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #f0f7ff at ui/app.slint:359"
+    },
+    "slint-theme:ui/app.slint:f0fdf4": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #f0fdf4 at ui/app.slint:1727"
+    },
+    "slint-theme:ui/app.slint:f1f5f9": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #f1f5f9 at ui/app.slint:2424"
+    },
+    "slint-theme:ui/app.slint:f59e0b": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #f59e0b at ui/app.slint:574"
+    },
+    "slint-theme:ui/app.slint:f8fafc": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #f8fafc at ui/app.slint:2210"
+    },
+    "slint-theme:ui/app.slint:fed7aa": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fed7aa at ui/app.slint:1730"
+    },
+    "slint-theme:ui/app.slint:fee2e2": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fee2e2 at ui/app.slint:443"
+    },
+    "slint-theme:ui/app.slint:fef08a": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fef08a at ui/app.slint:521"
+    },
+    "slint-theme:ui/app.slint:fef3c7": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fef3c7 at ui/app.slint:1876"
+    },
+    "slint-theme:ui/app.slint:fefce8": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fefce8 at ui/app.slint:518"
+    },
+    "slint-theme:ui/app.slint:fff7ed": {
+      "rule_id": "warden/slint-theme",
+      "check": "slint-theme",
+      "file": "ui/app.slint",
+      "message": "Unmapped color #fff7ed at ui/app.slint:1727"
+    }
+  }
+}

@@ -20,6 +20,33 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
+  warden:
+    name: Warden (Static Checks & CI Parity)
+    runs-on: ubuntu-latest
+    env:
+      WARDEN_VERSION: "0.2.0"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Install cargo-warden
+        run: |
+          set -euo pipefail
+          asset="cargo-warden-v${WARDEN_VERSION}-x86_64-unknown-linux-gnu"
+          base="https://github.com/zkz098/cargo-warden/releases/download/v${WARDEN_VERSION}"
+          curl -sSfL -o "$asset.tar.gz" "$base/$asset.tar.gz"
+          curl -sSfL -o SHA256SUMS.txt "$base/SHA256SUMS.txt"
+          grep -F "  $asset.tar.gz" SHA256SUMS.txt | sha256sum -c -
+          tar -xzf "$asset.tar.gz"
+          echo "$PWD/$asset" >> "$GITHUB_PATH"
+
+      - name: Run cargo-warden static checks
+        run: cargo warden check
+
   style:
     name: Code Style & Clippy
     runs-on: ubuntu-latest
@@ -72,13 +99,14 @@ jobs:
       - name: Cargo check
         run: cargo check --locked --workspace --all-targets
 
+      # 显式列出所有 workspace 成员，由 `cargo warden ci-parity` 校验无遗漏
       - name: Run unit & integration tests (Linux)
         if: runner.os == 'Linux'
-        run: xvfb-run --auto-servernum cargo test --locked --workspace --all-targets --verbose
+        run: xvfb-run --auto-servernum cargo test --locked -p lime-analyze -p lime-app -p lime-asr -p lime-audio -p lime-core -p lime-store -p xtask --all-targets --verbose
 
       - name: Run unit & integration tests (Windows)
         if: runner.os != 'Linux'
-        run: cargo test --locked --workspace --all-targets --verbose
+        run: cargo test --locked -p lime-analyze -p lime-app -p lime-asr -p lime-audio -p lime-core -p lime-store -p xtask --all-targets --verbose
 
   audit:
     name: Dependency Audit

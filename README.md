@@ -58,6 +58,20 @@ cargo xtask test
 cargo xtask dist
 ```
 
+### 质量门控
+本项目接入了 [cargo-warden](https://github.com/zkz098/cargo-warden) 作为本地与 CI 质量门控（配置位于 [`warden.toml`](warden.toml)，历史基线位于 [`warden-baseline.json`](warden-baseline.json)）：
+
+```bash
+# 运行静态质量检查（DAG、CI 覆盖一致性、Slint 主题、复杂度、文件长度、格式）
+cargo warden check
+
+# 运行完整本地验证门控（静态检查 + fmt + clippy + test + doc）
+cargo warden gate
+
+# 可选：安装提交前增量检查 Git hook
+cargo warden hook install --staged
+```
+
 ---
 
 ## 📜 开源协议
