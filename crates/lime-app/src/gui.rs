@@ -1637,28 +1637,9 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         });
     }
 
-    // ---------------- 关于模态框与外部链接 ----------------
-    {
-        let ui_weak = ui.as_weak();
-        ui.on_open_about_modal(move || {
-            let Some(ui) = ui_weak.upgrade() else { return };
-            ui.set_show_about_modal(true);
-        });
-    }
-
-    {
-        let ui_weak = ui.as_weak();
-        ui.on_close_about_modal(move || {
-            let Some(ui) = ui_weak.upgrade() else { return };
-            ui.set_show_about_modal(false);
-        });
-    }
-
-    {
-        ui.on_open_url(move |url| {
-            open_url_in_browser(url.as_str());
-        });
-    }
+    // ---------------- 关于模态框、外部链接与自更新 ----------------
+    wire_about_modal(&ui);
+    crate::updater::wire_updater(&ui);
 
     // ---------------- 听力试题命令 ----------------
     {
@@ -3418,6 +3399,22 @@ pub fn tool_info() -> String {
 }
 
 /// 在系统默认浏览器中打开指定 URL
+fn wire_about_modal(ui: &MainWindow) {
+    let w = ui.as_weak();
+    ui.on_open_about_modal(move || {
+        if let Some(u) = w.upgrade() {
+            u.set_show_about_modal(true);
+        }
+    });
+    let w = ui.as_weak();
+    ui.on_close_about_modal(move || {
+        if let Some(u) = w.upgrade() {
+            u.set_show_about_modal(false);
+        }
+    });
+    ui.on_open_url(|url| open_url_in_browser(url.as_str()));
+}
+
 pub fn open_url_in_browser(url: &str) {
     #[cfg(target_os = "windows")]
     {

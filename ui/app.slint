@@ -68,7 +68,6 @@ component RiButton inherits Rectangle {
         spacing: 5px;
         alignment: center;
         cross-axis-alignment: center;
-
         if root.icon != "" : Text {
             font-family: "remixicon";
             text: root.icon;
@@ -76,7 +75,6 @@ component RiButton inherits Rectangle {
             font-size: root.icon-size;
             vertical-alignment: center;
         }
-
         if root.text != "" : Text {
             text: root.text;
             color: !root.enabled ? #94a3b8 : (root.primary ? #ffffff : #1e293b);
@@ -241,19 +239,16 @@ component ExerciseView inherits Rectangle {
     VerticalLayout {
         padding: 16px;
         spacing: 12px;
-
         // 顶部控制行
         HorizontalLayout {
             height: 32px;
             spacing: 10px;
             cross-axis-alignment: center;
-
             RiIcon {
                 icon: Ri.survey;
                 icon-size: 16px;
                 icon-color: #3b82f6;
             }
-
             Text {
                 text: root.material-title != "" ? root.material-title : "听力试题";
                 font-size: 14px;
@@ -261,30 +256,25 @@ component ExerciseView inherits Rectangle {
                 color: #0f172a;
                 vertical-alignment: center;
             }
-
             if root.questions.length > 0 : Text {
                 text: "（共 " + root.questions.length + " 题）";
                 font-size: 12px;
                 color: #64748b;
                 vertical-alignment: center;
             }
-
             Rectangle { horizontal-stretch: 1; }
-
             if root.questions.length > 0 : RiButton {
                 text: root.submitted ? "重新作答" : "交卷 / 核对答案";
                 primary: !root.submitted;
                 btn-height: 28px;
                 clicked => { root.toggle-submitted(); }
             }
-
             RiButton {
                 icon: Ri.add;
                 text: "手动录入";
                 btn-height: 28px;
                 clicked => { root.open-manual-entry(); }
             }
-
             RiButton {
                 icon: Ri.survey;
                 text: "批量导入";
@@ -292,9 +282,7 @@ component ExerciseView inherits Rectangle {
                 clicked => { root.open-import(); }
             }
         }
-
         Rectangle { height: 1px; background: #f1f5f9; }
-
         // 空状态
         if root.questions.length == 0 : Rectangle {
             vertical-stretch: 1;
@@ -302,17 +290,14 @@ component ExerciseView inherits Rectangle {
             border-radius: 6px;
             border-width: 1px;
             border-color: #f1f5f9;
-
             VerticalLayout {
                 alignment: center;
                 spacing: 12px;
-
                 RiIcon {
                     icon: Ri.survey;
                     icon-size: 48px;
                     icon-color: #cbd5e1;
                 }
-
                 Text {
                     text: root.has-exercises ? "当前材料暂无对应的试题" : "当前音频尚未导入题目";
                     color: #475569;
@@ -320,25 +305,21 @@ component ExerciseView inherits Rectangle {
                     font-weight: 600;
                     horizontal-alignment: center;
                 }
-
                 Text {
                     text: root.has-exercises ? "随着播放切换到下一材料，试题将自动呈现" : "导入或手动录入后将根据听力材料自动联动呈现试题，支持自测交卷与即时解析";
                     color: #94a3b8;
                     font-size: 12px;
                     horizontal-alignment: center;
                 }
-
                 HorizontalLayout {
                     alignment: center;
                     spacing: 12px;
-
                     RiButton {
                         icon: Ri.add;
                         text: "手动录入题目";
                         primary: true;
                         clicked => { root.open-manual-entry(); }
                     }
-
                     RiButton {
                         icon: Ri.survey;
                         text: "批量粘贴导入";
@@ -347,30 +328,25 @@ component ExerciseView inherits Rectangle {
                 }
             }
         }
-
         // 题目列表
         if root.questions.length > 0 : ScrollView {
             vertical-stretch: 1;
             VerticalLayout {
                 alignment: start;
                 spacing: 14px;
-
                 for q in root.questions : Rectangle {
                     background: q.is-current ? #f0f7ff : #ffffff;
                     border-radius: 8px;
                     border-width: q.is-current ? 2px : 1px;
                     border-color: q.is-current ? #3b82f6 : #e2e8f0;
                     animate border-color, background { duration: 150ms; easing: ease-out; }
-
                     VerticalLayout {
                         padding: 14px;
                         spacing: 10px;
-
                         // 题号 + 试听按钮 + 正在播放状态
                         HorizontalLayout {
                             spacing: 8px;
                             alignment: center;
-
                             Text {
                                 text: "第 " + q.num + " 题";
                                 font-size: 13px;
@@ -378,7 +354,6 @@ component ExerciseView inherits Rectangle {
                                 color: q.is-current ? #1d4ed8 : #0f172a;
                                 vertical-alignment: center;
                             }
-
                             if q.is-current : Rectangle {
                                 height: 20px;
                                 border-radius: 10px;
@@ -396,23 +371,19 @@ component ExerciseView inherits Rectangle {
                                     }
                                 }
                             }
-
                             Rectangle { horizontal-stretch: 1; }
-
                             RiButton {
                                 icon: Ri.headphone;
                                 text: "试听本题";
                                 btn-height: 24px;
                                 clicked => { root.seek-question(q.num); }
                             }
-
                             RiButton {
                                 icon: Ri.edit;
                                 text: "编辑";
                                 btn-height: 24px;
                                 clicked => { root.edit-question(q.num); }
                             }
-
                             RiButton {
                                 icon: Ri.delete-icon;
                                 text: "删除";
@@ -420,7 +391,6 @@ component ExerciseView inherits Rectangle {
                                 clicked => { root.delete-question(q.num); }
                             }
                         }
-
                         // 题干
                         Text {
                             text: q.stem;
@@ -429,11 +399,9 @@ component ExerciseView inherits Rectangle {
                             font-weight: 500;
                             wrap: word-wrap;
                         }
-
                         // 选项列表
                         VerticalLayout {
                             spacing: 6px;
-
                             for opt in q.options : Rectangle {
                                 height: 34px;
                                 border-radius: 6px;
@@ -444,15 +412,12 @@ component ExerciseView inherits Rectangle {
                                 border-color: !root.submitted ?
                                     (opt.key == q.selected-opt ? #3b82f6 : (opt-touch.has-hover ? #cbd5e1 : #e2e8f0)) :
                                     (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #e2e8f0));
-
                                 animate background, border-color { duration: 120ms; easing: ease-out; }
-
                                 HorizontalLayout {
                                     padding-left: 12px;
                                     padding-right: 12px;
                                     spacing: 8px;
                                     alignment: center;
-
                                     // 单选圆圈
                                     Rectangle {
                                         width: 16px;
@@ -463,7 +428,6 @@ component ExerciseView inherits Rectangle {
                                             (opt.key == q.selected-opt ? #3b82f6 : #94a3b8) :
                                             (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #cbd5e1));
                                         background: white;
-
                                         if opt.key == q.selected-opt || (root.submitted && opt.key == q.correct-answer) : Rectangle {
                                             width: 8px;
                                             height: 8px;
@@ -473,7 +437,6 @@ component ExerciseView inherits Rectangle {
                                             y: (parent.height - self.height) / 2;
                                         }
                                     }
-
                                     // 选项文本
                                     Text {
                                         horizontal-stretch: 1;
@@ -486,7 +449,6 @@ component ExerciseView inherits Rectangle {
                                         vertical-alignment: center;
                                         overflow: elide;
                                     }
-
                                     // 提交后的答案提示标签
                                     if root.submitted && opt.key == q.correct-answer : Text {
                                         text: "正确答案";
@@ -495,7 +457,6 @@ component ExerciseView inherits Rectangle {
                                         color: #15803d;
                                         vertical-alignment: center;
                                     }
-
                                     if root.submitted && opt.key == q.selected-opt && opt.key != q.correct-answer : Text {
                                         text: "您的选择";
                                         font-size: 11px;
@@ -504,7 +465,6 @@ component ExerciseView inherits Rectangle {
                                         vertical-alignment: center;
                                     }
                                 }
-
                                 opt-touch := TouchArea {
                                     enabled: !root.submitted;
                                     mouse-cursor: !root.submitted ? pointer : default;
@@ -512,24 +472,20 @@ component ExerciseView inherits Rectangle {
                                 }
                             }
                         }
-
                         // 解析展示卡片（交卷后显示）
                         if root.submitted && q.explanation != "" : Rectangle {
                             background: #fefce8;
                             border-radius: 6px;
                             border-width: 1px;
                             border-color: #fef08a;
-
                             HorizontalLayout {
                                 padding: 10px;
                                 spacing: 8px;
-
                                 RiIcon {
                                     icon: Ri.info;
                                     icon-size: 14px;
                                     icon-color: #ca8a04;
                                 }
-
                                 Text {
                                     horizontal-stretch: 1;
                                     text: "解析：" + q.explanation;
@@ -561,7 +517,6 @@ component SubtitleStage inherits Rectangle {
     VerticalLayout {
         padding: 20px;
         spacing: 12px;
-
         if root.show-transcript : ScrollView {
             VerticalLayout {
                 alignment: start;
@@ -575,14 +530,12 @@ component SubtitleStage inherits Rectangle {
                         border-width: 1px;
                         border-radius: 6px;
                         animate background, border-color { duration: 120ms; easing: ease-out; }
-
                         HorizontalLayout {
                             padding-left: 8px;
                             padding-right: 8px;
                             padding-top: 4px;
                             padding-bottom: 4px;
                             alignment: center;
-
                             Text {
                                 text: w.text;
                                 color: w.idx == root.active-word ? #92400e : (word-touch.has-hover ? #0f172a : #1e293b);
@@ -600,24 +553,20 @@ component SubtitleStage inherits Rectangle {
                 }
             }
         }
-
         if !root.show-transcript : Rectangle {
             vertical-stretch: 1;
             background: #f8fafc;
             border-radius: 8px;
             border-width: 1px;
             border-color: #e2e8f0;
-
             VerticalLayout {
                 alignment: center;
                 spacing: 10px;
-
                 RiIcon {
                     icon: Ri.eye-off;
                     icon-size: 40px;
                     icon-color: #cbd5e1;
                 }
-
                 Text {
                     text: "原文已隐藏";
                     color: #334155;
@@ -625,7 +574,6 @@ component SubtitleStage inherits Rectangle {
                     font-weight: 600;
                     horizontal-alignment: center;
                 }
-
                 HorizontalLayout {
                     alignment: center;
                     RiButton {
@@ -689,11 +637,16 @@ export component MainWindow inherits Window {
     in-out property <string> whisper-status: "";
     in-out property <[WhisperBuildRow]> whisper-builds: [];
 
-    // ---- 关于模态框 ----
+    // ---- 关于模态框与自更新 ----
     in-out property <bool> show-about-modal: false;
-    in-out property <string> app-version: "0.1.4";
+    in-out property <string> app-version: "0.1.5-rc.1";
     in-out property <string> github-url: "https://github.com/zkz098/limelisten";
     in-out property <string> license-name: "GPL-3.0-or-later";
+    in-out property <int> update-state: 0; // 0=空闲/最新, 1=检查中, 2=有新版本, 3=下载安装中, 4=待重启, 5=错误
+    in-out property <string> update-status: "点击检查是否有新版本";
+    in-out property <string> update-available-version: "";
+    in-out property <string> update-notes: "";
+    in-out property <float> update-progress: 0.0;
 
     // ---- 听力试题状态与模态框 ----
     in-out property <int> main-tab: 0; // 0 = 逐词字幕, 1 = 听力试题, 2 = 题文对照
@@ -771,6 +724,9 @@ export component MainWindow inherits Window {
     callback open-about-modal();
     callback close-about-modal();
     callback open-url(string);
+    callback check-for-updates();
+    callback download-and-install-update();
+    callback restart-to-update();
 
     // 材料折叠 / 展开
     callback toggle-chapter-collapse(int);
@@ -784,7 +740,6 @@ export component MainWindow inherits Window {
     VerticalLayout {
         padding: 12px;
         spacing: 10px;
-
         // ================= 顶部导航工具栏 =================
         Rectangle {
             height: 48px;
@@ -793,7 +748,6 @@ export component MainWindow inherits Window {
             border-width: 1px;
             border-color: #e2e8f0;
             clip: true;
-
             // 转写全局进度细条
             if root.transcribe-progress >= 0 : Rectangle {
                 y: parent.height - 3px;
@@ -803,13 +757,11 @@ export component MainWindow inherits Window {
                 background: #3b82f6;
                 animate width { duration: 200ms; easing: ease-out; }
             }
-
             HorizontalLayout {
                 padding-left: 14px;
                 padding-right: 14px;
                 spacing: 10px;
                 cross-axis-alignment: center;
-
                 // Logo：真图标 ui/assets/logo.png（取自项目根目录 logo.png，黑底已抠为透明底；
                 // 正方形母版 256x256，图形本体上下各留 135/1215 的空白，故外面给 36x36 的盒子）
                 // 这里的 HorizontalLayout 显式 horizontal-stretch: 0：整组只占内容宽度，
@@ -818,14 +770,12 @@ export component MainWindow inherits Window {
                     horizontal-stretch: 0;
                     spacing: 8px;
                     cross-axis-alignment: center;
-
                     Image {
                         source: @image-url("assets/logo.png");
                         width: 36px;
                         height: 36px;
                         image-fit: contain;
                     }
-
                     Text {
                         horizontal-stretch: 0;
                         text: "limelisten";
@@ -835,87 +785,71 @@ export component MainWindow inherits Window {
                         vertical-alignment: center;
                     }
                 }
-
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-
                 RiButton {
                     icon: Ri.folder-open;
                     text: "打开文件…";
                     clicked => { root.open-file(); }
                 }
-
                 RiButton {
                     icon: Ri.folder-add;
                     text: "扫描文件夹…";
                     clicked => { root.open-folder(); }
                 }
-
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-
                 RiButton {
                     icon: Ri.scissors;
                     text: "切分";
                     clicked => { root.analyze(); }
                 }
-
                 RiButton {
                     icon: Ri.captions;
                     text: root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕";
                     primary: root.transcribe-progress >= 0;
                     clicked => { root.transcribe(); }
                 }
-
                 RiButton {
                     icon: Ri.survey;
                     text: root.has-exercises ? "题目 (已导入)" : "导入题目…";
                     clicked => { root.open-exercise-modal(); }
                 }
-
                 // 导出字幕与缓存菜单
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-
                 RiButton {
                     icon: Ri.file-sub;
                     text: "保存 .limed";
                     enabled: root.has-chapters || root.has-subtitles || root.has-exercises;
                     clicked => { root.save-limed(); }
                 }
-
                 RiButton {
                     icon: Ri.file-sub;
                     text: "导出 SRT";
                     enabled: root.has-subtitles;
                     clicked => { root.export-subtitles("srt"); }
                 }
-
                 RiButton {
                     icon: Ri.file-sub;
                     text: "导出 LRC";
                     enabled: root.has-subtitles;
                     clicked => { root.export-subtitles("lrc"); }
                 }
-
                 RiButton {
                     icon: Ri.file-sub;
                     text: "导出 TXT";
                     enabled: root.has-subtitles;
                     clicked => { root.export-subtitles("txt"); }
                 }
-
                 Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-
                 RiButton {
                     icon: Ri.speed;
                     text: "测速与模型";
                     clicked => { root.open-bench-modal(); }
                 }
-
                 RiButton {
                     icon: Ri.info;
                     text: "关于";
                     clicked => { root.open-about-modal(); }
                 }
-
                 // 状态文本
                 Rectangle {
                     horizontal-stretch: 1;
@@ -935,12 +869,10 @@ export component MainWindow inherits Window {
                 }
             }
         }
-
         // ================= 主体工作区 =================
         HorizontalLayout {
             spacing: 12px;
             vertical-stretch: 1;
-
             // ---------------- 左侧栏（380px）：章节 / 媒体库 ----------------
             Rectangle {
                 width: 380px;
@@ -948,22 +880,18 @@ export component MainWindow inherits Window {
                 border-radius: 8px;
                 border-width: 1px;
                 border-color: #e2e8f0;
-
                 VerticalLayout {
                     padding: 10px;
                     spacing: 8px;
-
                     // 选项卡切换头
                     HorizontalLayout {
                         height: 32px;
                         spacing: 6px;
-
                         Rectangle {
                             horizontal-stretch: 1;
                             background: root.sidebar-tab == 0 ? #e0e7ff : (tab0-touch.has-hover ? #e2e8f0 : #f1f5f9);
                             border-radius: 6px;
                             animate background { duration: 150ms; easing: ease-out; }
-
                             HorizontalLayout {
                                 alignment: center;
                                 spacing: 6px;
@@ -987,13 +915,11 @@ export component MainWindow inherits Window {
                                 clicked => { root.sidebar-tab = 0; }
                             }
                         }
-
                         Rectangle {
                             horizontal-stretch: 1;
                             background: root.sidebar-tab == 1 ? #e0e7ff : (tab1-touch.has-hover ? #e2e8f0 : #f1f5f9);
                             border-radius: 6px;
                             animate background { duration: 150ms; easing: ease-out; }
-
                             HorizontalLayout {
                                 alignment: center;
                                 spacing: 6px;
@@ -1018,7 +944,6 @@ export component MainWindow inherits Window {
                             }
                         }
                     }
-
                     // 信息指示
                     if root.sidebar-tab == 0 : Text {
                         text: root.chime-info;
@@ -1027,12 +952,10 @@ export component MainWindow inherits Window {
                         height: 14px;
                         overflow: elide;
                     }
-
                     // TAB 0: 章节列表
                     if root.sidebar-tab == 0 : VerticalLayout {
                         vertical-stretch: 1;
                         spacing: 8px;
-
                         // 列表本体（ListView 只实例化可见行，媒体库大时不会一次建满）
                         ListView {
                             vertical-stretch: 1;
@@ -1042,13 +965,11 @@ export component MainWindow inherits Window {
                                     background: row.chapter-index == root.current ? #dbeafe : (row-touch.has-hover ? #f8fafc : transparent);
                                     border-radius: 5px;
                                     animate background { duration: 120ms; easing: ease-out; }
-
                                     // 整行点击选中（声明在布局之前，让折叠箭头的 TouchArea 优先命中）
                                     row-touch := TouchArea {
                                         mouse-cursor: pointer;
                                         clicked => { root.select-chapter(row.chapter-index); }
                                     }
-
                                     // 题行的缩进导轨：一眼看出属于上面那份材料，
                                     // 顺序错乱时（题跑出材料外面）也能立刻发现。
                                     if row.level == 1 : Rectangle {
@@ -1060,14 +981,12 @@ export component MainWindow inherits Window {
                                         background: row.chapter-index == root.current ? #60a5fa : #cbd5e1;
                                         animate background { duration: 150ms; easing: ease-out; }
                                     }
-
                                     HorizontalLayout {
                                         width: 100%;
                                         padding-left: row.level == 0 ? 6px : 26px;
                                         padding-right: 8px;
                                         spacing: 6px;
                                         cross-axis-alignment: center;
-
                                         // 材料折叠箭头：首份材料（引言）默认折叠
                                         if row.level == 0 : Rectangle {
                                             width: 20px;
@@ -1075,7 +994,6 @@ export component MainWindow inherits Window {
                                             border-radius: 4px;
                                             background: arrow-touch.has-hover ? #e2e8f0 : transparent;
                                             animate background { duration: 120ms; easing: ease-out; }
-
                                             RiIcon {
                                                 icon: row.collapsed ? Ri.arrow-right-s : Ri.arrow-down-s;
                                                 icon-size: 14px;
@@ -1086,21 +1004,18 @@ export component MainWindow inherits Window {
                                                 clicked => { root.toggle-chapter-collapse(row.chapter-index); }
                                             }
                                         }
-
                                         // 锁标记
                                         if row.locked : RiIcon {
                                             icon: Ri.lock;
                                             icon-size: 12px;
                                             icon-color: #b45309;
                                         }
-
                                         // 材料图标
                                         if row.level == 0 : RiIcon {
                                             icon: Ri.tab-chapter;
                                             icon-size: 13px;
                                             icon-color: row.chapter-index == root.current ? #1d4ed8 : #4f46e5;
                                         }
-
                                         Text {
                                             text: row.title;
                                             color: row.low-confidence ? #b45309 : (row.level == 0 ? #0f172a : #334155);
@@ -1109,7 +1024,6 @@ export component MainWindow inherits Window {
                                             vertical-alignment: center;
                                             overflow: elide;
                                         }
-
                                         // 材料下的题数：让两级层次一眼可读
                                         if row.sub-count > 0 : Rectangle {
                                             height: 16px;
@@ -1128,7 +1042,6 @@ export component MainWindow inherits Window {
                                                 }
                                             }
                                         }
-
                                         Text {
                                             text: row.time-range;
                                             color: #64748b;
@@ -1140,7 +1053,6 @@ export component MainWindow inherits Window {
                                     }
                                 }
                         }
-
                         // 章节微调工具卡片 (P1-3)
                         if root.current >= 0 : Rectangle {
                             height: 128px;
@@ -1148,11 +1060,9 @@ export component MainWindow inherits Window {
                             border-radius: 6px;
                             border-width: 1px;
                             border-color: #cbd5e1;
-
                             VerticalLayout {
                                 padding: 8px;
                                 spacing: 6px;
-
                                 HorizontalLayout {
                                     spacing: 6px;
                                     RiIcon {
@@ -1168,7 +1078,6 @@ export component MainWindow inherits Window {
                                         vertical-alignment: center;
                                     }
                                 }
-
                                 // 起点微调
                                 HorizontalLayout {
                                     spacing: 4px;
@@ -1178,7 +1087,6 @@ export component MainWindow inherits Window {
                                     RiButton { text: "+0.1s"; btn-height: 24px; clicked => { root.adjust-chapter(0.1, true); } }
                                     RiButton { text: "+0.5s"; btn-height: 24px; clicked => { root.adjust-chapter(0.5, true); } }
                                 }
-
                                 // 终点微调
                                 HorizontalLayout {
                                     spacing: 4px;
@@ -2138,6 +2046,90 @@ export component MainWindow inherits Window {
                 }
 
                 Rectangle { height: 1px; background: #f1f5f9; }
+
+                // 软件更新卡片
+                Rectangle {
+                    background: #f8fafc;
+                    border-radius: 8px;
+                    border-width: 1px;
+                    border-color: #e2e8f0;
+
+                    VerticalLayout {
+                        padding: 14px;
+                        spacing: 8px;
+
+                        HorizontalLayout {
+                            spacing: 10px;
+                            cross-axis-alignment: center;
+
+                            VerticalLayout {
+                                horizontal-stretch: 1;
+                                spacing: 2px;
+                                Text {
+                                    text: "软件更新 (Sigilup)";
+                                    font-size: 13px;
+                                    font-weight: 700;
+                                    color: #0f172a;
+                                }
+                                Text {
+                                    text: root.update-status;
+                                    font-size: 11px;
+                                    color: root.update-state == 5 ? #dc2626 : (root.update-state == 4 ? #15803d : #64748b);
+                                    wrap: word-wrap;
+                                }
+                            }
+
+                            if root.update-state == 0 || root.update-state == 5 : RiButton {
+                                text: "检查更新";
+                                btn-height: 30px;
+                                clicked => { root.check-for-updates(); }
+                            }
+                            if root.update-state == 1 : RiButton {
+                                text: "检查中...";
+                                enabled: false;
+                                btn-height: 30px;
+                            }
+                            if root.update-state == 2 : RiButton {
+                                text: "更新至 v" + root.update-available-version;
+                                primary: true;
+                                btn-height: 30px;
+                                clicked => { root.download-and-install-update(); }
+                            }
+                            if root.update-state == 3 : RiButton {
+                                text: "更新中...";
+                                enabled: false;
+                                btn-height: 30px;
+                            }
+                            if root.update-state == 4 : RiButton {
+                                text: "立即重启";
+                                primary: true;
+                                btn-height: 30px;
+                                clicked => { root.restart-to-update(); }
+                            }
+                        }
+
+                        if root.update-state == 3 : Rectangle {
+                            height: 6px;
+                            border-radius: 3px;
+                            background: #e2e8f0;
+                            clip: true;
+                            Rectangle {
+                                x: 0px;
+                                width: parent.width * root.update-progress;
+                                height: 100%;
+                                border-radius: 3px;
+                                background: #2563eb;
+                            }
+                        }
+
+                        if root.update-state == 2 && root.update-notes != "" : Text {
+                            text: root.update-notes;
+                            font-size: 11px;
+                            color: #334155;
+                            wrap: word-wrap;
+                        }
+                    }
+                }
 
                 // GitHub 仓库卡片
                 Rectangle {

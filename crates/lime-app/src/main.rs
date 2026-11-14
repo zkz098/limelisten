@@ -16,6 +16,7 @@
 mod cli;
 mod gui;
 mod paths;
+mod updater;
 
 slint::include_modules!();
 
