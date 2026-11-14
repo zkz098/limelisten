@@ -222,10 +222,12 @@ component ExerciseView inherits Rectangle {
     in property <string> material-title: "";
     in property <bool> submitted: false;
     in property <bool> has-exercises: false;
+    in-out property <bool> presentation-mode: false;
     callback select-option(int, string);
     callback toggle-submitted();
     callback reset-exam();
     callback seek-question(int);
+    callback step-material(int);
     callback open-import();
     callback open-manual-entry();
     callback edit-question(int);
@@ -263,22 +265,32 @@ component ExerciseView inherits Rectangle {
                 vertical-alignment: center;
             }
             Rectangle { horizontal-stretch: 1; }
+            if root.questions.length > 0 && root.presentation-mode : RiButton {
+                icon: Ri.skip-back; text: "上一组"; btn-height: 28px;
+                clicked => { root.step-material(-1); }
+            }
+            if root.questions.length > 0 && root.presentation-mode : RiButton {
+                icon: Ri.skip-forward; text: "下一组"; btn-height: 28px;
+                clicked => { root.step-material(1); }
+            }
             if root.questions.length > 0 : RiButton {
-                text: root.submitted ? "重新作答" : "交卷 / 核对答案";
+                text: root.presentation-mode ? (root.submitted ? "隐藏答案" : "显示答案") : (root.submitted ? "重新作答" : "交卷 / 核对答案");
                 primary: !root.submitted;
                 btn-height: 28px;
                 clicked => { root.toggle-submitted(); }
             }
-            RiButton {
-                icon: Ri.add;
-                text: "手动录入";
+            if root.questions.length > 0 || root.presentation-mode : RiButton {
+                text: root.presentation-mode ? "退出演示" : "演示模式";
+                primary: root.presentation-mode;
                 btn-height: 28px;
+                clicked => { root.presentation-mode = !root.presentation-mode; }
+            }
+            if !root.presentation-mode : RiButton {
+                icon: Ri.add; text: "手动录入"; btn-height: 28px;
                 clicked => { root.open-manual-entry(); }
             }
-            RiButton {
-                icon: Ri.survey;
-                text: "批量导入";
-                btn-height: 28px;
+            if !root.presentation-mode : RiButton {
+                icon: Ri.survey; text: "批量导入"; btn-height: 28px;
                 clicked => { root.open-import(); }
             }
         }
@@ -349,149 +361,110 @@ component ExerciseView inherits Rectangle {
                             alignment: center;
                             Text {
                                 text: "第 " + q.num + " 题";
-                                font-size: 13px;
+                                font-size: root.presentation-mode ? 15px : 13px;
                                 font-weight: 700;
                                 color: q.is-current ? #1d4ed8 : #0f172a;
                                 vertical-alignment: center;
                             }
                             if q.is-current : Rectangle {
-                                height: 20px;
-                                border-radius: 10px;
-                                background: #dbeafe;
+                                height: 20px; border-radius: 10px; background: #dbeafe;
                                 HorizontalLayout {
-                                    padding-left: 8px;
-                                    padding-right: 8px;
-                                    alignment: center;
+                                    padding-left: 8px; padding-right: 8px; alignment: center;
                                     Text {
-                                        text: "正在播放";
-                                        font-size: 10px;
-                                        font-weight: 700;
-                                        color: #1d4ed8;
-                                        vertical-alignment: center;
+                                        text: "正在播放"; font-size: 10px; font-weight: 700;
+                                        color: #1d4ed8; vertical-alignment: center;
                                     }
                                 }
                             }
                             Rectangle { horizontal-stretch: 1; }
-                            RiButton {
-                                icon: Ri.headphone;
-                                text: "试听本题";
-                                btn-height: 24px;
+                            if !root.presentation-mode : RiButton {
+                                icon: Ri.headphone; text: "试听本题"; btn-height: 24px;
                                 clicked => { root.seek-question(q.num); }
                             }
-                            RiButton {
-                                icon: Ri.edit;
-                                text: "编辑";
-                                btn-height: 24px;
+                            if !root.presentation-mode : RiButton {
+                                icon: Ri.edit; text: "编辑"; btn-height: 24px;
                                 clicked => { root.edit-question(q.num); }
                             }
-                            RiButton {
-                                icon: Ri.delete-icon;
-                                text: "删除";
-                                btn-height: 24px;
+                            if !root.presentation-mode : RiButton {
+                                icon: Ri.delete-icon; text: "删除"; btn-height: 24px;
                                 clicked => { root.delete-question(q.num); }
                             }
                         }
                         // 题干
                         Text {
                             text: q.stem;
-                            font-size: 14px;
+                            font-size: root.presentation-mode ? 18px : 14px;
                             color: #1e293b;
-                            font-weight: 500;
+                            font-weight: root.presentation-mode ? 600 : 500;
                             wrap: word-wrap;
                         }
                         // 选项列表
                         VerticalLayout {
-                            spacing: 6px;
+                            spacing: root.presentation-mode ? 8px : 6px;
                             for opt in q.options : Rectangle {
-                                height: 34px;
-                                border-radius: 6px;
-                                border-width: 1px;
+                                min-height: root.presentation-mode ? 42px : 34px;
+                                border-radius: 6px; border-width: 1px;
                                 background: !root.submitted ?
-                                    (opt.key == q.selected-opt ? #eff6ff : (opt-touch.has-hover ? #f8fafc : #ffffff)) :
-                                    (opt.key == q.correct-answer ? #dcfce7 : (opt.key == q.selected-opt ? #fee2e2 : #f8fafc));
+                                    (!root.presentation-mode && opt.key == q.selected-opt ? #eff6ff : (!root.presentation-mode && opt-touch.has-hover ? #f8fafc : #ffffff)) :
+                                    (opt.key == q.correct-answer ? #dcfce7 : (!root.presentation-mode && opt.key == q.selected-opt ? #fee2e2 : #f8fafc));
                                 border-color: !root.submitted ?
-                                    (opt.key == q.selected-opt ? #3b82f6 : (opt-touch.has-hover ? #cbd5e1 : #e2e8f0)) :
-                                    (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #e2e8f0));
+                                    (!root.presentation-mode && opt.key == q.selected-opt ? #3b82f6 : (!root.presentation-mode && opt-touch.has-hover ? #cbd5e1 : #e2e8f0)) :
+                                    (opt.key == q.correct-answer ? #22c55e : (!root.presentation-mode && opt.key == q.selected-opt ? #ef4444 : #e2e8f0));
                                 animate background, border-color { duration: 120ms; easing: ease-out; }
                                 HorizontalLayout {
-                                    padding-left: 12px;
-                                    padding-right: 12px;
-                                    spacing: 8px;
-                                    alignment: center;
-                                    // 单选圆圈
-                                    Rectangle {
-                                        width: 16px;
-                                        height: 16px;
-                                        border-radius: 8px;
-                                        border-width: 1.5px;
+                                    padding-left: 12px; padding-right: 12px; padding-top: 6px; padding-bottom: 6px;
+                                    spacing: 8px; alignment: center;
+                                    // 单选圆圈（演示模式隐藏）
+                                    if !root.presentation-mode : Rectangle {
+                                        width: 16px; height: 16px; border-radius: 8px; border-width: 1.5px;
                                         border-color: !root.submitted ?
                                             (opt.key == q.selected-opt ? #3b82f6 : #94a3b8) :
                                             (opt.key == q.correct-answer ? #22c55e : (opt.key == q.selected-opt ? #ef4444 : #cbd5e1));
                                         background: white;
                                         if opt.key == q.selected-opt || (root.submitted && opt.key == q.correct-answer) : Rectangle {
-                                            width: 8px;
-                                            height: 8px;
-                                            border-radius: 4px;
+                                            width: 8px; height: 8px; border-radius: 4px;
                                             background: !root.submitted ? #3b82f6 : (opt.key == q.correct-answer ? #22c55e : #ef4444);
-                                            x: (parent.width - self.width) / 2;
-                                            y: (parent.height - self.height) / 2;
+                                            x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2;
                                         }
                                     }
                                     // 选项文本
                                     Text {
-                                        horizontal-stretch: 1;
-                                        text: opt.text;
-                                        font-size: 13px;
+                                        horizontal-stretch: 1; text: opt.text;
+                                        font-size: root.presentation-mode ? 16px : 13px;
                                         color: !root.submitted ?
-                                            (opt.key == q.selected-opt ? #1d4ed8 : #1e293b) :
-                                            (opt.key == q.correct-answer ? #15803d : (opt.key == q.selected-opt ? #b91c1c : #64748b));
-                                        font-weight: (opt.key == q.selected-opt || (root.submitted && opt.key == q.correct-answer)) ? 600 : 400;
+                                            (!root.presentation-mode && opt.key == q.selected-opt ? #1d4ed8 : #1e293b) :
+                                            (opt.key == q.correct-answer ? #15803d : (!root.presentation-mode && opt.key == q.selected-opt ? #b91c1c : #64748b));
+                                        font-weight: ((!root.presentation-mode && opt.key == q.selected-opt) || (root.submitted && opt.key == q.correct-answer)) ? 600 : 400;
                                         vertical-alignment: center;
-                                        overflow: elide;
+                                        wrap: word-wrap;
                                     }
-                                    // 提交后的答案提示标签
+                                    // 提交/显示答案后的提示标签
                                     if root.submitted && opt.key == q.correct-answer : Text {
-                                        text: "正确答案";
-                                        font-size: 11px;
-                                        font-weight: 700;
-                                        color: #15803d;
-                                        vertical-alignment: center;
+                                        text: "正确答案"; font-size: 11px; font-weight: 700;
+                                        color: #15803d; vertical-alignment: center;
                                     }
-                                    if root.submitted && opt.key == q.selected-opt && opt.key != q.correct-answer : Text {
-                                        text: "您的选择";
-                                        font-size: 11px;
-                                        font-weight: 700;
-                                        color: #b91c1c;
-                                        vertical-alignment: center;
+                                    if !root.presentation-mode && root.submitted && opt.key == q.selected-opt && opt.key != q.correct-answer : Text {
+                                        text: "您的选择"; font-size: 11px; font-weight: 700;
+                                        color: #b91c1c; vertical-alignment: center;
                                     }
                                 }
                                 opt-touch := TouchArea {
-                                    enabled: !root.submitted;
-                                    mouse-cursor: !root.submitted ? pointer : default;
+                                    enabled: !root.submitted && !root.presentation-mode;
+                                    mouse-cursor: !root.submitted && !root.presentation-mode ? pointer : default;
                                     clicked => { root.select-option(q.num, opt.key); }
                                 }
                             }
                         }
-                        // 解析展示卡片（交卷后显示）
+                        // 解析展示卡片（交卷或显示答案后展示）
                         if root.submitted && q.explanation != "" : Rectangle {
-                            background: #fefce8;
-                            border-radius: 6px;
-                            border-width: 1px;
-                            border-color: #fef08a;
+                            background: #fefce8; border-radius: 6px; border-width: 1px; border-color: #fef08a;
                             HorizontalLayout {
-                                padding: 10px;
-                                spacing: 8px;
-                                RiIcon {
-                                    icon: Ri.info;
-                                    icon-size: 14px;
-                                    icon-color: #ca8a04;
-                                }
+                                padding: 10px; spacing: 8px;
+                                RiIcon { icon: Ri.info; icon-size: 14px; icon-color: #ca8a04; }
                                 Text {
-                                    horizontal-stretch: 1;
-                                    text: "解析：" + q.explanation;
-                                    font-size: 12px;
-                                    color: #854d0e;
-                                    wrap: word-wrap;
+                                    horizontal-stretch: 1; text: "解析：" + q.explanation;
+                                    font-size: root.presentation-mode ? 14px : 12px;
+                                    color: #854d0e; wrap: word-wrap;
                                 }
                             }
                         }
@@ -654,6 +627,7 @@ export component MainWindow inherits Window {
     in-out property <string> current-exercise-material-title: "当前材料试题";
     in-out property <bool> has-exercises: false;
     in-out property <bool> exercise-submitted: false; // 自测交卷模式：true 表示已查看答案与解析
+    in-out property <bool> exercise-presentation-mode: false; // 大屏演示模式：仅展示题目与选项，自动随材料切换，手动显示答案
     in-out property <bool> show-exercise-modal: false;
     in-out property <int> exercise-modal-tab: 0; // 0 = 批量粘贴导入, 1 = 手动录入
     in-out property <string> exercise-import-text: "";
@@ -710,6 +684,7 @@ export component MainWindow inherits Window {
     callback toggle-exercise-submitted();
     callback reset-exercise-exam();
     callback seek-to-question(int);
+    callback step-exercise-material(int);
     callback edit-exercise-question(int);
     callback delete-exercise-question(int);
     callback save-exercise-question(bool);
@@ -1374,10 +1349,12 @@ export component MainWindow inherits Window {
                             material-title: root.current-exercise-material-title;
                             submitted: root.exercise-submitted;
                             has-exercises: root.has-exercises;
+                            presentation-mode <=> root.exercise-presentation-mode;
                             select-option(num, opt) => { root.select-question-option(num, opt); }
                             toggle-submitted() => { root.toggle-exercise-submitted(); }
                             reset-exam() => { root.reset-exercise-exam(); }
                             seek-question(num) => { root.seek-to-question(num); }
+                            step-material(dir) => { root.step-exercise-material(dir); }
                             open-import() => { root.open-exercise-modal(); }
                             open-manual-entry() => { root.open-manual-exercise-modal(); }
                             edit-question(num) => { root.edit-exercise-question(num); }
@@ -1395,10 +1372,12 @@ export component MainWindow inherits Window {
                                 material-title: root.current-exercise-material-title;
                                 submitted: root.exercise-submitted;
                                 has-exercises: root.has-exercises;
+                                presentation-mode <=> root.exercise-presentation-mode;
                                 select-option(num, opt) => { root.select-question-option(num, opt); }
                                 toggle-submitted() => { root.toggle-exercise-submitted(); }
                                 reset-exam() => { root.reset-exercise-exam(); }
                                 seek-question(num) => { root.seek-to-question(num); }
+                                step-material(dir) => { root.step-exercise-material(dir); }
                                 open-import() => { root.open-exercise-modal(); }
                                 open-manual-entry() => { root.open-manual-exercise-modal(); }
                                 edit-question(num) => { root.edit-exercise-question(num); }

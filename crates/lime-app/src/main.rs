@@ -14,6 +14,7 @@
 //! 默认（无参数）：启动 Slint 图形界面。
 
 mod cli;
+mod exercise_sync;
 mod gui;
 mod paths;
 mod updater;

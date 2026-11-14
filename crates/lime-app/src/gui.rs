@@ -2058,11 +2058,32 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let mut st = state.borrow_mut();
             st.exercise_submitted = !st.exercise_submitted;
             refresh_exercise_ui(&ui, &st);
-            if st.exercise_submitted {
-                ui.set_status("已交卷：正在核对答案与解析".into());
-            } else {
-                ui.set_status("重新作答模式".into());
+            let pres = ui.get_exercise_presentation_mode();
+            let msg = match (pres, st.exercise_submitted) {
+                (true, true) => "演示模式：已显示答案与解析",
+                (true, false) => "演示模式：已隐藏答案",
+                (false, true) => "已交卷：正在核对答案与解析",
+                (false, false) => "重新作答模式",
+            };
+            ui.set_status(msg.into());
+        });
+    }
+    {
+        let ui_weak = ui.as_weak();
+        let state = state.clone();
+        ui.on_step_exercise_material(move |dir| {
+            let Some(ui) = ui_weak.upgrade() else { return };
+            let mut st = state.borrow_mut();
+            if st.exercises.is_empty() {
+                return;
             }
+            st.active_material_ordinal = crate::exercise_sync::step_material_ordinal(
+                st.active_material_ordinal,
+                st.exercises.len(),
+                dir,
+            );
+            st.active_question_num = None;
+            refresh_exercise_ui(&ui, &st);
         });
     }
 
@@ -3331,36 +3352,11 @@ fn update_exercise_sync(ui: &MainWindow, st: &mut GuiState, pos_ms: u64) {
         return;
     }
 
-    let cur_chap = core
-        .chapters
-        .iter()
-        .find(|c| pos_ms >= c.start_ms && pos_ms < c.end_ms);
-
-    let (mat_ord, q_num) = match cur_chap {
-        Some(c) if c.is_material() => {
-            let ord = if c.title == lime_core::INTRO_TITLE {
-                1
-            } else {
-                c.ordinal
-            };
-            (ord, None)
-        }
-        Some(c) => {
-            let p_ord = c
-                .parent
-                .and_then(|p_idx| core.chapters.get(p_idx))
-                .map(|p| p.ordinal)
-                .unwrap_or(1);
-            let num = c
-                .title
-                .strip_prefix("第")
-                .and_then(|s| s.strip_suffix("题"))
-                .and_then(|s| s.trim().parse::<u32>().ok())
-                .unwrap_or(c.ordinal);
-            (p_ord, Some(num))
-        }
-        None => (st.active_material_ordinal, None),
-    };
+    let (mat_ord, q_num) = crate::exercise_sync::resolve_exercise_sync(
+        &core.chapters,
+        pos_ms,
+        st.active_material_ordinal,
+    );
 
     if mat_ord != st.active_material_ordinal || q_num != st.active_question_num {
         st.active_material_ordinal = mat_ord;
