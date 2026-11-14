@@ -18,6 +18,7 @@ mod exercise_sync;
 mod gui;
 mod paths;
 mod updater;
+mod window_fit;
 
 slint::include_modules!();
 

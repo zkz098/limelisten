@@ -52,6 +52,7 @@ component RiButton inherits Rectangle {
     in property <bool> primary: false;
     in property <bool> enabled: true;
     in property <length> btn-height: 32px;
+    in property <length> h-pad: 10px;
     callback clicked();
 
     border-radius: 6px;
@@ -63,8 +64,8 @@ component RiButton inherits Rectangle {
     animate background, border-color { duration: 150ms; easing: ease-out; }
 
     HorizontalLayout {
-        padding-left: 10px;
-        padding-right: 10px;
+        padding-left: root.h-pad;
+        padding-right: root.h-pad;
         spacing: 5px;
         alignment: center;
         cross-axis-alignment: center;
@@ -257,6 +258,8 @@ component ExerciseView inherits Rectangle {
                 font-weight: 700;
                 color: #0f172a;
                 vertical-alignment: center;
+                overflow: elide;
+                horizontal-stretch: 1;
             }
             if root.questions.length > 0 : Text {
                 text: "（共 " + root.questions.length + " 题）";
@@ -264,7 +267,6 @@ component ExerciseView inherits Rectangle {
                 color: #64748b;
                 vertical-alignment: center;
             }
-            Rectangle { horizontal-stretch: 1; }
             if root.questions.length > 0 && root.presentation-mode : RiButton {
                 icon: Ri.skip-back; text: "上一组"; btn-height: 28px;
                 clicked => { root.step-material(-1); }
@@ -568,8 +570,10 @@ export component MainWindow inherits Window {
     icon: @image-url("assets/logo.png");
     preferred-width: 1320px;
     preferred-height: 860px;
-    min-width: 1140px;
-    min-height: 700px;
+    min-width: 640px;
+    min-height: 440px;
+    in-out property <bool> compact-toolbar: false;
+    in-out property <bool> compact-window: false;
     background: #f1f5f9;
 
     // ---- 数据模型 ----
@@ -718,7 +722,7 @@ export component MainWindow inherits Window {
         spacing: 10px;
         // ================= 顶部导航工具栏 =================
         Rectangle {
-            height: 48px;
+            height: root.compact-toolbar ? 78px : 48px;
             background: white;
             border-radius: 8px;
             border-width: 1px;
@@ -733,115 +737,67 @@ export component MainWindow inherits Window {
                 background: #3b82f6;
                 animate width { duration: 200ms; easing: ease-out; }
             }
-            HorizontalLayout {
-                padding-left: 14px;
-                padding-right: 14px;
-                spacing: 10px;
-                cross-axis-alignment: center;
-                // Logo：真图标 ui/assets/logo.png（取自项目根目录 logo.png，黑底已抠为透明底；
-                // 正方形母版 256x256，图形本体上下各留 135/1215 的空白，故外面给 36x36 的盒子）
-                // 这里的 HorizontalLayout 显式 horizontal-stretch: 0：整组只占内容宽度，
-                // 剩余空间全部留给下面那个 horizontal-stretch: 1 的状态栏 spacer。
+            VerticalLayout {
+                padding-left: 12px;
+                padding-right: 12px;
+                padding-top: root.compact-toolbar ? 6px : 0px;
+                padding-bottom: root.compact-toolbar ? 6px : 0px;
+                spacing: 6px;
+                alignment: center;
                 HorizontalLayout {
-                    horizontal-stretch: 0;
-                    spacing: 8px;
+                    height: root.compact-toolbar ? 30px : 48px;
+                    spacing: root.compact-toolbar ? 6px : 10px;
                     cross-axis-alignment: center;
-                    Image {
-                        source: @image-url("assets/logo.png");
-                        width: 36px;
-                        height: 36px;
-                        image-fit: contain;
-                    }
-                    Text {
-                        horizontal-stretch: 0;
-                        text: "limelisten";
-                        color: #0f172a;
-                        font-size: 16px;
-                        font-weight: 800;
-                        vertical-alignment: center;
-                    }
-                }
-                Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-                RiButton {
-                    icon: Ri.folder-open;
-                    text: "打开文件…";
-                    clicked => { root.open-file(); }
-                }
-                RiButton {
-                    icon: Ri.folder-add;
-                    text: "扫描文件夹…";
-                    clicked => { root.open-folder(); }
-                }
-                Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-                RiButton {
-                    icon: Ri.scissors;
-                    text: "切分";
-                    clicked => { root.analyze(); }
-                }
-                RiButton {
-                    icon: Ri.captions;
-                    text: root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕";
-                    primary: root.transcribe-progress >= 0;
-                    clicked => { root.transcribe(); }
-                }
-                RiButton {
-                    icon: Ri.survey;
-                    text: root.has-exercises ? "题目 (已导入)" : "导入题目…";
-                    clicked => { root.open-exercise-modal(); }
-                }
-                // 导出字幕与缓存菜单
-                Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-                RiButton {
-                    icon: Ri.file-sub;
-                    text: "保存 .limed";
-                    enabled: root.has-chapters || root.has-subtitles || root.has-exercises;
-                    clicked => { root.save-limed(); }
-                }
-                RiButton {
-                    icon: Ri.file-sub;
-                    text: "导出 SRT";
-                    enabled: root.has-subtitles;
-                    clicked => { root.export-subtitles("srt"); }
-                }
-                RiButton {
-                    icon: Ri.file-sub;
-                    text: "导出 LRC";
-                    enabled: root.has-subtitles;
-                    clicked => { root.export-subtitles("lrc"); }
-                }
-                RiButton {
-                    icon: Ri.file-sub;
-                    text: "导出 TXT";
-                    enabled: root.has-subtitles;
-                    clicked => { root.export-subtitles("txt"); }
-                }
-                Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
-                RiButton {
-                    icon: Ri.speed;
-                    text: "测速与模型";
-                    clicked => { root.open-bench-modal(); }
-                }
-                RiButton {
-                    icon: Ri.info;
-                    text: "关于";
-                    clicked => { root.open-about-modal(); }
-                }
-                // 状态文本
-                Rectangle {
-                    horizontal-stretch: 1;
                     HorizontalLayout {
-                        alignment: end;
-                        padding-left: 8px;
-                        padding-right: 4px;
+                        horizontal-stretch: 0;
+                        spacing: 8px;
                         cross-axis-alignment: center;
-                        Text {
-                            text: root.status;
-                            color: #475569;
-                            font-size: 12px;
-                            vertical-alignment: center;
-                            overflow: elide;
+                        Image { source: @image-url("assets/logo.png"); width: root.compact-toolbar ? 28px : 36px; height: root.compact-toolbar ? 28px : 36px; image-fit: contain; }
+                        Text { horizontal-stretch: 0; text: "limelisten"; color: #0f172a; font-size: 16px; font-weight: 800; vertical-alignment: center; }
+                    }
+                    Rectangle { width: 1px; height: 22px; background: #e2e8f0; }
+                    RiButton { icon: Ri.folder-open; text: "打开文件…"; btn-height: root.compact-toolbar ? 28px : 32px; clicked => { root.open-file(); } }
+                    RiButton { icon: Ri.folder-add; text: "扫描文件夹…"; btn-height: root.compact-toolbar ? 28px : 32px; clicked => { root.open-folder(); } }
+                    Rectangle { width: 1px; height: 22px; background: #e2e8f0; }
+                    RiButton { icon: Ri.scissors; text: "切分"; btn-height: root.compact-toolbar ? 28px : 32px; clicked => { root.analyze(); } }
+                    RiButton {
+                        icon: Ri.captions;
+                        text: root.transcribe-progress >= 0 ? "转写中 (" + round(root.transcribe-progress * 100) + "%)" : "转写字幕";
+                        primary: root.transcribe-progress >= 0;
+                        btn-height: root.compact-toolbar ? 28px : 32px;
+                        clicked => { root.transcribe(); }
+                    }
+                    RiButton { icon: Ri.survey; text: root.has-exercises ? "题目 (已导入)" : "导入题目…"; btn-height: root.compact-toolbar ? 28px : 32px; clicked => { root.open-exercise-modal(); } }
+                    if !root.compact-toolbar : Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
+                    if !root.compact-toolbar : RiButton { icon: Ri.file-sub; text: "保存 .limed"; enabled: root.has-chapters || root.has-subtitles || root.has-exercises; clicked => { root.save-limed(); } }
+                    if !root.compact-toolbar : RiButton { icon: Ri.file-sub; text: "导出 SRT"; enabled: root.has-subtitles; clicked => { root.export-subtitles("srt"); } }
+                    if !root.compact-toolbar : RiButton { icon: Ri.file-sub; text: "导出 LRC"; enabled: root.has-subtitles; clicked => { root.export-subtitles("lrc"); } }
+                    if !root.compact-toolbar : RiButton { icon: Ri.file-sub; text: "导出 TXT"; enabled: root.has-subtitles; clicked => { root.export-subtitles("txt"); } }
+                    if !root.compact-toolbar : Rectangle { width: 1px; height: 24px; background: #e2e8f0; }
+                    if !root.compact-toolbar : RiButton { icon: Ri.speed; text: "测速与模型"; clicked => { root.open-bench-modal(); } }
+                    if !root.compact-toolbar : RiButton { icon: Ri.info; text: "关于"; clicked => { root.open-about-modal(); } }
+                    Rectangle {
+                        horizontal-stretch: 1;
+                        HorizontalLayout {
+                            alignment: end;
+                            padding-left: 8px;
+                            padding-right: 4px;
+                            cross-axis-alignment: center;
+                            Text { text: root.status; color: #475569; font-size: 12px; vertical-alignment: center; overflow: elide; }
                         }
                     }
+                }
+                if root.compact-toolbar : HorizontalLayout {
+                    height: 28px;
+                    spacing: 6px;
+                    cross-axis-alignment: center;
+                    RiButton { icon: Ri.file-sub; text: "保存 .limed"; btn-height: 26px; enabled: root.has-chapters || root.has-subtitles || root.has-exercises; clicked => { root.save-limed(); } }
+                    RiButton { icon: Ri.file-sub; text: "导出 SRT"; btn-height: 26px; enabled: root.has-subtitles; clicked => { root.export-subtitles("srt"); } }
+                    RiButton { icon: Ri.file-sub; text: "导出 LRC"; btn-height: 26px; enabled: root.has-subtitles; clicked => { root.export-subtitles("lrc"); } }
+                    RiButton { icon: Ri.file-sub; text: "导出 TXT"; btn-height: 26px; enabled: root.has-subtitles; clicked => { root.export-subtitles("txt"); } }
+                    Rectangle { width: 1px; height: 18px; background: #e2e8f0; }
+                    RiButton { icon: Ri.speed; text: "测速与模型"; btn-height: 26px; clicked => { root.open-bench-modal(); } }
+                    RiButton { icon: Ri.info; text: "关于"; btn-height: 26px; clicked => { root.open-about-modal(); } }
                 }
             }
         }
@@ -849,9 +805,9 @@ export component MainWindow inherits Window {
         HorizontalLayout {
             spacing: 12px;
             vertical-stretch: 1;
-            // ---------------- 左侧栏（380px）：章节 / 媒体库 ----------------
+            // ---------------- 左侧栏（自适应 256px-380px）：章节 / 媒体库 ----------------
             Rectangle {
-                width: 380px;
+                width: root.compact-window ? 256px : (root.compact-toolbar ? 300px : 380px);
                 background: white;
                 border-radius: 8px;
                 border-width: 1px;
@@ -998,6 +954,7 @@ export component MainWindow inherits Window {
                                             font-weight: row.level == 0 ? 700 : 400;
                                             font-size: row.level == 0 ? 13px : 12px;
                                             vertical-alignment: center;
+                                            horizontal-stretch: 1;
                                             overflow: elide;
                                         }
                                         // 材料下的题数：让两级层次一眼可读
@@ -1023,7 +980,6 @@ export component MainWindow inherits Window {
                                             color: #64748b;
                                             font-size: 11px;
                                             vertical-alignment: center;
-                                            horizontal-stretch: 1;
                                             horizontal-alignment: right;
                                         }
                                     }
@@ -1057,41 +1013,47 @@ export component MainWindow inherits Window {
                                 // 起点微调
                                 HorizontalLayout {
                                     spacing: 4px;
-                                    Text { text: "起点:"; font-size: 11px; color: #64748b; vertical-alignment: center; width: 34px; }
-                                    RiButton { text: "-0.5s"; btn-height: 24px; clicked => { root.adjust-chapter(-0.5, true); } }
-                                    RiButton { text: "-0.1s"; btn-height: 24px; clicked => { root.adjust-chapter(-0.1, true); } }
-                                    RiButton { text: "+0.1s"; btn-height: 24px; clicked => { root.adjust-chapter(0.1, true); } }
-                                    RiButton { text: "+0.5s"; btn-height: 24px; clicked => { root.adjust-chapter(0.5, true); } }
+                                    Text { text: "起点:"; font-size: 11px; color: #64748b; vertical-alignment: center; width: 32px; }
+                                    RiButton { text: "-0.5s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(-0.5, true); } }
+                                    RiButton { text: "-0.1s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(-0.1, true); } }
+                                    RiButton { text: "+0.1s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(0.1, true); } }
+                                    RiButton { text: "+0.5s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(0.5, true); } }
                                 }
                                 // 终点微调
                                 HorizontalLayout {
                                     spacing: 4px;
-                                    Text { text: "终点:"; font-size: 11px; color: #64748b; vertical-alignment: center; width: 34px; }
-                                    RiButton { text: "-0.5s"; btn-height: 24px; clicked => { root.adjust-chapter(-0.5, false); } }
-                                    RiButton { text: "-0.1s"; btn-height: 24px; clicked => { root.adjust-chapter(-0.1, false); } }
-                                    RiButton { text: "+0.1s"; btn-height: 24px; clicked => { root.adjust-chapter(0.1, false); } }
-                                    RiButton { text: "+0.5s"; btn-height: 24px; clicked => { root.adjust-chapter(0.5, false); } }
+                                    Text { text: "终点:"; font-size: 11px; color: #64748b; vertical-alignment: center; width: 32px; }
+                                    RiButton { text: "-0.5s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(-0.5, false); } }
+                                    RiButton { text: "-0.1s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(-0.1, false); } }
+                                    RiButton { text: "+0.1s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(0.1, false); } }
+                                    RiButton { text: "+0.5s"; btn-height: 24px; h-pad: 6px; horizontal-stretch: 1; clicked => { root.adjust-chapter(0.5, false); } }
                                 }
 
                                 // 功能操作行
                                 HorizontalLayout {
-                                    spacing: 6px;
+                                    spacing: 4px;
                                     RiButton {
                                         icon: Ri.headphone;
                                         text: "试听边界";
                                         btn-height: 28px;
+                                        h-pad: 6px;
+                                        horizontal-stretch: 1;
                                         clicked => { root.preview-boundary(); }
                                     }
                                     RiButton {
                                         icon: Ri.split;
                                         text: "拆分";
                                         btn-height: 28px;
+                                        h-pad: 6px;
+                                        horizontal-stretch: 1;
                                         clicked => { root.split-current-chapter(); }
                                     }
                                     RiButton {
                                         icon: Ri.merge;
                                         text: "合并下一节";
                                         btn-height: 28px;
+                                        h-pad: 6px;
+                                        horizontal-stretch: 1;
                                         clicked => { root.merge-next-chapter(); }
                                     }
                                 }
@@ -1432,7 +1394,7 @@ export component MainWindow inherits Window {
 
                 // 底部控制与进度卡片
                 Rectangle {
-                    height: 100px;
+                    height: root.compact-window ? 86px : 100px;
                     background: white;
                     border-radius: 8px;
                     border-width: 1px;
@@ -1441,28 +1403,20 @@ export component MainWindow inherits Window {
                     VerticalLayout {
                         padding-left: 16px;
                         padding-right: 16px;
-                        padding-top: 10px;
-                        padding-bottom: 10px;
-                        spacing: 8px;
+                        padding-top: root.compact-window ? 6px : 10px;
+                        padding-bottom: root.compact-window ? 6px : 10px;
+                        spacing: root.compact-window ? 4px : 8px;
 
                         // 进度滑块与时间
                         HorizontalLayout {
                             spacing: 12px;
                             height: 24px;
-                            HorizontalLayout {
-                                spacing: 6px;
-                                alignment: center;
-                                Text {
-                                    text: root.time-display;
-                                    color: root.playing ? #1d4ed8 : #334155;
-                                    font-size: 12px;
-                                    font-weight: 600;
-                                    vertical-alignment: center;
-                                    animate color { duration: 150ms; easing: ease-out; }
-                                }
-                                if root.playing : AudioVisualizer {
-                                    playing: root.playing;
-                                }
+                            Text {
+                                text: root.time-display;
+                                color: #334155;
+                                font-size: 12px;
+                                font-weight: 600;
+                                vertical-alignment: center;
                             }
                             Slider {
                                 horizontal-stretch: 1;
@@ -1481,7 +1435,7 @@ export component MainWindow inherits Window {
 
                         // 按钮控制条
                         HorizontalLayout {
-                            spacing: 10px;
+                            spacing: root.compact-window ? 4px : 10px;
                             alignment: center;
 
                             RiButton {
@@ -1559,9 +1513,9 @@ export component MainWindow inherits Window {
             // 拦截点击穿透
         }
 
-        Rectangle {
-            width: 760px;
-            height: modal-content.preferred-height;
+        bench-modal-box := Rectangle {
+            width: min(760px, parent.width - 32px);
+            height: min(modal-content.preferred-height, parent.height - 32px);
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2) + (root.show-bench-modal ? 0px : 16px);
             animate y { duration: 200ms; easing: ease-out; }
@@ -1571,9 +1525,13 @@ export component MainWindow inherits Window {
             border-color: #cbd5e1;
             clip: true;
 
-            modal-content := VerticalLayout {
-                padding: 18px;
-                spacing: 12px;
+            ScrollView {
+                width: 100%;
+                height: 100%;
+                modal-content := VerticalLayout {
+                    width: bench-modal-box.width;
+                    padding: 18px;
+                    spacing: 12px;
 
                 // 标题栏
                 HorizontalLayout {
@@ -1914,6 +1872,7 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            }
         }
     }
 
@@ -1932,9 +1891,9 @@ export component MainWindow inherits Window {
             clicked => { root.close-about-modal(); }
         }
 
-        Rectangle {
-            width: 580px;
-            height: about-modal-content.preferred-height;
+        about-modal-box := Rectangle {
+            width: min(580px, parent.width - 32px);
+            height: min(about-modal-content.preferred-height, parent.height - 32px);
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2) + (root.show-about-modal ? 0px : 16px);
             animate y { duration: 200ms; easing: ease-out; }
@@ -1949,9 +1908,13 @@ export component MainWindow inherits Window {
                 // 拦截内部穿透点击
             }
 
-            about-modal-content := VerticalLayout {
-                padding: 24px;
-                spacing: 16px;
+            ScrollView {
+                width: 100%;
+                height: 100%;
+                about-modal-content := VerticalLayout {
+                    width: about-modal-box.width;
+                    padding: 24px;
+                    spacing: 16px;
 
                 // 标题栏：Logo、软件名称、版本与关闭按钮
                 HorizontalLayout {
@@ -2270,6 +2233,7 @@ export component MainWindow inherits Window {
                     }
                 }
             }
+            }
         }
     }
 
@@ -2289,9 +2253,9 @@ export component MainWindow inherits Window {
             clicked => { root.close-exercise-modal(); }
         }
 
-        Rectangle {
-            width: 720px;
-            height: exercise-modal-content.preferred-height;
+        exercise-modal-box := Rectangle {
+            width: min(720px, parent.width - 32px);
+            height: min(exercise-modal-content.preferred-height, parent.height - 32px);
             x: (parent.width - self.width) / 2;
             y: max(0px, (parent.height - self.height) / 2) + (root.show-exercise-modal ? 0px : 16px);
             animate y { duration: 200ms; easing: ease-out; }
@@ -2306,9 +2270,13 @@ export component MainWindow inherits Window {
                 // 拦截内部穿透点击
             }
 
-            exercise-modal-content := VerticalLayout {
-                padding: 22px;
-                spacing: 14px;
+            ScrollView {
+                width: 100%;
+                height: 100%;
+                exercise-modal-content := VerticalLayout {
+                    width: exercise-modal-box.width;
+                    padding: 22px;
+                    spacing: 14px;
 
                 // 标题栏与关闭
                 HorizontalLayout {
@@ -2852,6 +2820,7 @@ export component MainWindow inherits Window {
                         }
                     }
                 }
+            }
             }
         }
     }

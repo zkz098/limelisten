@@ -19,7 +19,7 @@ env_logger = "0.11"
 # 只保留实际用到的 winit + femtovg + 软件渲染回退；
 # 去掉未使用的 accessibility / system-tray，减小包体与初始化开销。
 slint = { version = "1.18", default-features = false, features = [
-    "std", "backend-default", "renderer-femtovg", "renderer-software", "compat-1-2",
+    "std", "backend-default", "renderer-femtovg", "renderer-software", "compat-1-2", "unstable-winit-030",
 ] }
 slint-build = "1.18"
 # 0.6 的 AudioCodecParameters/AudioSpec/plane 新 API 已在 lime-audio 完成适配。

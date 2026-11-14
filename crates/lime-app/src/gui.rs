@@ -2475,7 +2475,11 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
         std::mem::forget(timer);
     }
 
-    let run_result = ui.run();
+    let run_result = crate::window_fit::show_and_fit(&ui).and_then(|()| {
+        slint::run_event_loop().map(|()| {
+            let _ = ui.hide();
+        })
+    });
 
     // 退出前保存最后一次进度，并等后台写线程把队列刷完（Drop 里 join）。
     {
