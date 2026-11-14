@@ -2993,7 +2993,7 @@ dependencies = [
 
 [[package]]
 name = "lime-analyze"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "hound",
  "lime-core",
@@ -3002,7 +3002,7 @@ dependencies = [
 
 [[package]]
 name = "lime-app"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "crossbeam-channel",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "lime-asr"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "lime-analyze",
  "lime-core",
@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "lime-audio"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "cpal",
  "crossbeam-channel",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "lime-core"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "quick-xml 0.42.0",
  "regex",
@@ -3056,7 +3056,7 @@ dependencies = [
 
 [[package]]
 name = "lime-store"
-version = "0.1.5-rc.1"
+version = "0.1.5"
 dependencies = [
  "lime-core",
  "rusqlite",
