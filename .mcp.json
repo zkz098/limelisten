@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "loredex": {
-      "command": "loredex-mcp",
-      "description": "Evidence-backed repository wiki under .wiki/"
-    }
-  }
-}
