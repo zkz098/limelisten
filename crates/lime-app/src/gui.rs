@@ -17,7 +17,8 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use lime_audio::Engine;
 use lime_core::{
     find_accompanying_audio, find_matching_limed, normalize_chapters, Chapter, ChapterSource,
-    ExerciseParser, ExerciseQuestion, LimedFile, LimedMeta, MaterialExercise, Sentence, Word,
+    ExerciseMode, ExerciseParser, ExerciseQuestion, LimedFile, LimedMeta, MaterialExercise,
+    Sentence, Word,
 };
 use lime_store::{MediaItem, MediaUpsert, ProgressSaver, Store};
 use slint::{ComponentHandle, ModelRc, VecModel};
@@ -2006,15 +2007,14 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                     .unwrap_or(1);
                 (st.media_id, mat_count)
             };
-
-            let parsed = ExerciseParser::parse(&text, material_count);
+            let mode = ExerciseMode::from_index(ui.get_exercise_import_mode());
+            let parsed = ExerciseParser::parse_with_mode(&text, material_count, mode);
             if parsed.is_empty() {
                 ui.set_exercise_import_error(
                     "未能识别出试题，请确保包含题号（如 1.）和选项（如 A. B.）".into(),
                 );
                 return;
             }
-
             let total_q: usize = parsed.iter().map(|m| m.questions.len()).sum();
             {
                 let mut st = state.borrow_mut();
@@ -2026,7 +2026,6 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                 st.exercise_submitted = false;
                 refresh_exercise_ui(&ui, &st);
             }
-
             ui.set_show_exercise_modal(false);
             ui.set_exercise_import_error("".into());
             ui.set_exercise_import_notice("".into());
@@ -2088,9 +2087,11 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
             let target_ms = {
                 let st = state.borrow();
                 let Some(core) = st.core.as_ref() else { return };
-                let q_str = format!("第 {num} 题");
                 let ch = core.chapters.iter().find(|c| {
-                    (c.title.contains(&q_str) || c.ordinal == num as u32) && !c.is_material()
+                    !c.is_material()
+                        && (c.ordinal == num as u32
+                            || c.title.contains(&format!("第 {num} 遍"))
+                            || c.title.contains(&format!("第 {num} 题")))
                 });
                 if let Some(c) = ch {
                     Some(c.start_ms)
@@ -3050,7 +3051,7 @@ fn uncloak_current(chapters: &[Chapter], hidden: &[bool], cur: i32) -> i32 {
     chapters[idx].parent.map(|p| p as i32).unwrap_or(cur)
 }
 
-/// 面向状态栏的规模描述：首份材料叫「引言」时单独计数（`引言 + N 材料 / M 题`）。
+/// 面向状态栏的规模描述：首份材料叫「引言」时单独计数（`引言 + N 材料 / M 遍`）。
 fn chapters_summary(chapters: &[Chapter]) -> String {
     let n_mat = chapters.iter().filter(|c| c.is_material()).count();
     let n_q = chapters.len() - n_mat;
@@ -3059,9 +3060,9 @@ fn chapters_summary(chapters: &[Chapter]) -> String {
         .find(|c| c.is_material())
         .is_some_and(|c| c.title.trim() == lime_core::INTRO_TITLE);
     if has_intro && n_mat > 1 {
-        format!("引言 + {} 材料 / {} 题", n_mat - 1, n_q)
+        format!("引言 + {} 材料 / {} 遍", n_mat - 1, n_q)
     } else {
-        format!("{n_mat} 材料 / {n_q} 题")
+        format!("{n_mat} 材料 / {n_q} 遍")
     }
 }
 
@@ -3471,7 +3472,7 @@ mod tests {
             ordinal,
             start_ms: start,
             end_ms: end,
-            title: format!("第 {ordinal} 题"),
+            title: format!("第 {ordinal} 遍"),
             source: ChapterSource::Structure,
             confidence: 0.8,
             locked: false,
@@ -3497,7 +3498,7 @@ mod tests {
         let collapsed = HashMap::new();
         let rows = chapter_rows_from_list(&chapters, &collapsed);
         let titles: Vec<String> = rows.iter().map(|r| r.title.to_string()).collect();
-        assert_eq!(titles, vec!["引言", "材料 1", "第 1 题"]);
+        assert_eq!(titles, vec!["引言", "材料 1", "第 1 遍"]);
         assert!(rows[0].collapsed, "引言默认折叠");
         assert!(!rows[1].collapsed, "其余材料默认展开");
         assert_eq!(
@@ -3530,8 +3531,8 @@ mod tests {
 
     #[test]
     fn chapters_summary_counts_intro_separately() {
-        assert_eq!(chapters_summary(&two_materials()), "引言 + 1 材料 / 3 题");
-        assert_eq!(chapters_summary(&[]), "0 材料 / 0 题");
+        assert_eq!(chapters_summary(&two_materials()), "引言 + 1 材料 / 3 遍");
+        assert_eq!(chapters_summary(&[]), "0 材料 / 0 遍");
     }
 
     /// 字幕缓存指纹：老缓存（无指纹）必须失效；SQLite 连模型一起校验；

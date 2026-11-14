@@ -963,7 +963,7 @@ mod tests {
             ordinal,
             start_ms: start,
             end_ms: end,
-            title: format!("第 {ordinal} 题"),
+            title: format!("第 {ordinal} 遍"),
             source: ChapterSource::Structure,
             confidence: 0.9,
             locked: false,
@@ -1138,7 +1138,7 @@ mod tests {
         let loaded = s.load_chapters(mid).unwrap();
         assert_eq!(
             titles(&loaded),
-            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题", "第 2 题"]
+            vec!["引言", "第 1 遍", "第 2 遍", "材料 1", "第 1 遍", "第 2 遍"]
         );
         assert!(lime_core::chapters_are_canonical(&loaded));
         assert_eq!(loaded[1].parent, Some(0));
@@ -1186,7 +1186,7 @@ mod tests {
         let loaded = s.load_chapters(1).unwrap();
         assert_eq!(
             titles(&loaded),
-            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题", "第 2 题"]
+            vec!["引言", "第 1 遍", "第 2 遍", "材料 1", "第 1 遍", "第 2 遍"]
         );
         assert!(lime_core::chapters_are_canonical(&loaded));
         assert_eq!(loaded[4].parent, Some(3));
@@ -1248,12 +1248,12 @@ mod tests {
             titles(&loaded),
             vec![
                 "引言",
-                "第 1 题",
-                "第 2 题",
-                "第 3 题",
+                "第 1 遍",
+                "第 2 遍",
+                "第 3 遍",
                 "材料 1",
-                "第 1 题",
-                "第 2 题"
+                "第 1 遍",
+                "第 2 遍"
             ]
         );
         assert_eq!(loaded[1].end_ms, 8_000);

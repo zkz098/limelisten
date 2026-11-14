@@ -20,10 +20,12 @@ pub type Result<T> = std::result::Result<T, Error>;
 
 pub mod docx;
 pub mod exercise;
+pub mod exercise_mode;
 pub mod exercise_parser;
 pub mod exercise_section;
 pub mod limed;
 pub use exercise::{ExerciseQuestion, MaterialExercise};
+pub use exercise_mode::ExerciseMode;
 pub use exercise_parser::ExerciseParser;
 pub use limed::{find_accompanying_audio, find_matching_limed, LimedFile, LimedMeta};
 
@@ -263,14 +265,17 @@ fn is_intro_or_auto_material(c: &Chapter) -> bool {
     c.title.trim() == INTRO_TITLE || renumber_material_title(&c.title, 0).is_some()
 }
 
-/// 自动题名形如「第 3 题」，可带历史遗留的「(2)」后缀；人工改名返回 None 不动。
+/// 自动分段名形如「第 3 遍」（或历史遗留「第 3 题」），可带「(2)」后缀；人工改名返回 None 不动。
 fn renumber_question_title(title: &str, ordinal: u32) -> Option<String> {
     let rest = strip_ordinal_suffix(title).strip_prefix("第")?.trim();
-    let rest = rest.strip_suffix("题")?.trim();
+    let rest = rest
+        .strip_suffix("遍")
+        .or_else(|| rest.strip_suffix("题"))?
+        .trim();
     if rest.is_empty() || !rest.chars().all(|c| c.is_ascii_digit()) {
         return None;
     }
-    Some(format!("第 {ordinal} 题"))
+    Some(format!("第 {ordinal} 遍"))
 }
 
 /// 自动材料名形如「材料 4」/「材料 4（叮咚）」；人工改名（`第一节`、`Text 1`…）不动。
@@ -360,7 +365,7 @@ mod tests {
             ordinal,
             start_ms: start,
             end_ms: end,
-            title: format!("第 {ordinal} 题"),
+            title: format!("第 {ordinal} 遍"),
             source: ChapterSource::Structure,
             confidence: 0.8,
             locked: false,
@@ -404,7 +409,7 @@ mod tests {
         let fixed = normalize_chapters(&broken);
         assert_eq!(
             titles(&fixed),
-            vec!["引言", "第 1 题", "第 2 题", "材料 1", "第 1 题"]
+            vec!["引言", "第 1 遍", "第 2 遍", "材料 1", "第 1 遍"]
         );
         assert!(chapters_are_canonical(&fixed));
         assert_eq!(fixed[1].parent, Some(0));
@@ -421,7 +426,7 @@ mod tests {
         let mut b1 = question(2, 1, Some(0), 70_000, 130_000);
         b1.title = "第 1 题".into();
         let out = normalize_chapters(&[m1, m2, b1]);
-        assert_eq!(titles(&out), vec!["引言", "材料 1", "第 1 题"]);
+        assert_eq!(titles(&out), vec!["引言", "材料 1", "第 1 遍"]);
         assert_eq!(out[2].parent, Some(1));
     }
 
@@ -431,14 +436,14 @@ mod tests {
         let mut q1 = question(1, 1, Some(0), 0, 40_000);
         q1.title = "第 1 题 (2)".into();
         let mut q2 = question(2, 3, Some(0), 40_000, 100_000);
-        q2.title = "第 3 题".into();
+        q2.title = "第 3 遍".into();
         let mut named = question(3, 9, Some(0), 50_000, 80_000);
         named.title = "第二问（用户改名）".into();
 
         let out = normalize_chapters(&[m, q1, q2, named]);
         assert_eq!(
             titles(&out),
-            vec!["引言", "第 1 题", "第 2 题", "第二问（用户改名）"]
+            vec!["引言", "第 1 遍", "第 2 遍", "第二问（用户改名）"]
         );
         assert_eq!(out[1].ordinal, 1);
         assert_eq!(out[2].ordinal, 2);
@@ -452,7 +457,7 @@ mod tests {
         let q1 = question(2, 1, Some(0), 0, 20_000);
         let q2 = question(3, 1, Some(1), 70_000, 130_000);
         let out = normalize_chapters(&[m1, m2, q1, q2]);
-        assert_eq!(titles(&out), vec!["引言", "第 1 题", "材料 1", "第 1 题"]);
+        assert_eq!(titles(&out), vec!["引言", "第 1 遍", "材料 1", "第 1 遍"]);
         assert!(chapters_are_canonical(&out));
         assert_eq!(normalize_chapters(&out), out, "引言规范化必须幂等");
 

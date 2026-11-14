@@ -661,6 +661,7 @@ export component MainWindow inherits Window {
     in-out property <string> exercise-import-notice: "";
     in-out property <bool> exercise-import-loading: false;
     in-out property <bool> exercise-listening-only: true;
+    in-out property <int> exercise-import-mode: 0; // 0 = 自动识别, 1 = 天津高考, 2 = 全国高考, 3 = 四六级
 
     // 手动录入/修改试题字段
     in-out property <bool> edit-q-is-editing: false;
@@ -2358,51 +2359,19 @@ export component MainWindow inherits Window {
                         border-width: 1px;
                         border-color: #e2e8f0;
                         HorizontalLayout {
-                            padding: 2px;
-                            spacing: 2px;
-
-                            // 批量导入 Tab
-                            Rectangle {
+                            padding: 2px; spacing: 2px;
+                            for t in [{ id: 0, label: "批量粘贴导入" }, { id: 1, label: "手动录入题目" }] : Rectangle {
                                 border-radius: 4px;
-                                background: root.exercise-modal-tab == 0 ? #ffffff : transparent;
+                                background: root.exercise-modal-tab == t.id ? #ffffff : transparent;
                                 HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 10px;
-                                    alignment: center;
+                                    padding-left: 10px; padding-right: 10px; alignment: center;
                                     Text {
-                                        text: "批量粘贴导入";
-                                        font-size: 11px;
-                                        font-weight: root.exercise-modal-tab == 0 ? 700 : 500;
-                                        color: root.exercise-modal-tab == 0 ? #1d4ed8 : #64748b;
-                                        vertical-alignment: center;
+                                        text: t.label; font-size: 11px; vertical-alignment: center;
+                                        font-weight: root.exercise-modal-tab == t.id ? 700 : 500;
+                                        color: root.exercise-modal-tab == t.id ? #1d4ed8 : #64748b;
                                     }
                                 }
-                                TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.exercise-modal-tab = 0; }
-                                }
-                            }
-
-                            // 手动录入 Tab
-                            Rectangle {
-                                border-radius: 4px;
-                                background: root.exercise-modal-tab == 1 ? #ffffff : transparent;
-                                HorizontalLayout {
-                                    padding-left: 10px;
-                                    padding-right: 10px;
-                                    alignment: center;
-                                    Text {
-                                        text: "手动录入题目";
-                                        font-size: 11px;
-                                        font-weight: root.exercise-modal-tab == 1 ? 700 : 500;
-                                        color: root.exercise-modal-tab == 1 ? #1d4ed8 : #64748b;
-                                        vertical-alignment: center;
-                                    }
-                                }
-                                TouchArea {
-                                    mouse-cursor: pointer;
-                                    clicked => { root.exercise-modal-tab = 1; }
-                                }
+                                TouchArea { mouse-cursor: pointer; clicked => { root.exercise-modal-tab = t.id; } }
                             }
                         }
                     }
@@ -2455,6 +2424,42 @@ export component MainWindow inherits Window {
                             primary: root.exercise-listening-only;
                             enabled: !root.exercise-import-loading;
                             clicked => { root.exercise-listening-only = !root.exercise-listening-only; }
+                        }
+                    }
+
+                    // 题目模式选择
+                    HorizontalLayout {
+                        spacing: 8px;
+                        cross-axis-alignment: center;
+                        Text { text: "题目模式"; font-size: 12px; font-weight: 600; color: #334155; }
+                        Rectangle {
+                            height: 28px; border-radius: 6px; background: #f1f5f9;
+                            HorizontalLayout {
+                                padding: 3px; spacing: 3px;
+                                for m in [
+                                    { id: 0, label: "自动识别" }, { id: 1, label: "天津高考" },
+                                    { id: 2, label: "全国高考" }, { id: 3, label: "四六级" },
+                                ] : Rectangle {
+                                    border-radius: 4px;
+                                    background: root.exercise-import-mode == m.id ? #ffffff : transparent;
+                                    HorizontalLayout {
+                                        padding-left: 8px; padding-right: 8px;
+                                        Text {
+                                            text: m.label; font-size: 11px; vertical-alignment: center;
+                                            font-weight: root.exercise-import-mode == m.id ? 700 : 500;
+                                            color: root.exercise-import-mode == m.id ? #1d4ed8 : #64748b;
+                                        }
+                                    }
+                                    TouchArea { mouse-cursor: pointer; clicked => { root.exercise-import-mode = m.id; } }
+                                }
+                            }
+                        }
+                        Text {
+                            font-size: 11px; color: #64748b; vertical-alignment: center;
+                            text: root.exercise-import-mode == 1 ? "1~5单题 + 6~15长材料，第16题起截断"
+                                : root.exercise-import-mode == 2 ? "1~5单题 + 6~20长材料，第21题起截断"
+                                : root.exercise-import-mode == 3 ? "1~25题（Section A/B/C），第26题起截断"
+                                : "通用启发式识别";
                         }
                     }
 

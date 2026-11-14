@@ -116,7 +116,9 @@ fn classify_section_heading(line: &str, following: &[&str]) -> Option<SectionKin
         || line.contains("翻译")
         || line.contains("语法")
         || line.contains("词汇")
-        || line.contains("英语知识运用");
+        || line.contains("英语知识运用")
+        || line.contains("单项填空")
+        || line.contains("单项选择");
 
     if mentions_listening {
         return Some(SectionKind::Listening);

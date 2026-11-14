@@ -1,15 +1,24 @@
 //! 智能听力题目解析器：支持纯文本/Markdown 启发式解析与 JSON 结构化解析。
 
-use crate::{ExerciseQuestion, MaterialExercise};
+use crate::{ExerciseMode, ExerciseQuestion, MaterialExercise};
 use regex::Regex;
 use std::collections::HashMap;
 
 pub struct ExerciseParser;
 
 impl ExerciseParser {
-    /// 解析输入的文本或 JSON 字符串。
+    /// 解析输入的文本或 JSON 字符串（自动模式）。
     /// `known_material_count` 是音频当前切分出的材料数（去除引言后），用于在未检测到显式材料头时智能分组。
     pub fn parse(input: &str, known_material_count: usize) -> Vec<MaterialExercise> {
+        Self::parse_with_mode(input, known_material_count, ExerciseMode::Auto)
+    }
+
+    /// 按指定题目模式解析输入的文本或 JSON 字符串。
+    pub fn parse_with_mode(
+        input: &str,
+        known_material_count: usize,
+        mode: ExerciseMode,
+    ) -> Vec<MaterialExercise> {
         let sanitized = sanitize_input(input);
         let trimmed = sanitized.trim();
         if trimmed.is_empty() {
@@ -24,16 +33,24 @@ impl ExerciseParser {
         }
         if let Ok(questions) = serde_json::from_str::<Vec<ExerciseQuestion>>(trimmed) {
             if !questions.is_empty() {
-                return Self::group_questions_into_materials(questions, known_material_count);
+                let groups = mode.apply_grouping(
+                    vec![("材料 1".to_string(), questions)],
+                    known_material_count,
+                );
+                return Self::build_material_exercises(groups);
             }
         }
 
         // 2. 启发式文本/Markdown 解析
-        Self::parse_text(trimmed, known_material_count)
+        Self::parse_text(trimmed, known_material_count, mode)
     }
 
     /// 启发式纯文本解析
-    fn parse_text(text: &str, known_material_count: usize) -> Vec<MaterialExercise> {
+    fn parse_text(
+        text: &str,
+        known_material_count: usize,
+        mode: ExerciseMode,
+    ) -> Vec<MaterialExercise> {
         let lines: Vec<&str> = text.lines().map(|l| l.trim()).collect();
 
         // 正则表达式定义
@@ -49,7 +66,7 @@ impl ExerciseParser {
             r"^第\s*[一二三四五六七八九十0-9]+\s*[节部分].*$|",
             r"(?i)^Part\s+[A-Za-z0-9IVXLC]+.*$|",
             r"^听(?:下面|第)\s*[0-9一二三四五六七八九十两\s]*段?\s*(?:对话|独白|录音|材料|话).*$|",
-            r"(?i)^Questions?\s+\d+\s*(?:to|-|—)\s*\d+\s+are\s+based\s+on.*$|",
+            r"(?i)^Questions?\s+\d+\s*(?:to|-|—)\s*\d+.*$|",
             r"^[一二三四五六七八九十]+[、.．:：\s]\s*听力.*$"
         )).unwrap();
 
@@ -69,35 +86,12 @@ impl ExerciseParser {
         let re_end_answer_block =
             Regex::new(r"(?i)^[【\[]?(?:参考答案|答案|Keys?|Answers?)[】\]]?$").unwrap();
 
-        // 集中答案格式：例如 "1. A  2. B" 或 "1-5 A B C D A"
-        let re_item_ans = Regex::new(r"(\d+)[\.、\s\:\-]+([A-Ga-g])").unwrap();
-
-        let mut end_answers: HashMap<u32, String> = HashMap::new();
-        let mut in_end_answer_block = false;
-
-        // 先扫描一遍提取文末集中答案
-        for line in &lines {
-            if line.is_empty() {
-                continue;
-            }
-            if re_end_answer_block.is_match(line) {
-                in_end_answer_block = true;
-                continue;
-            }
-            if in_end_answer_block {
-                for cap in re_item_ans.captures_iter(line) {
-                    if let (Some(num_m), Some(ans_m)) = (cap.get(1), cap.get(2)) {
-                        if let Ok(num) = num_m.as_str().parse::<u32>() {
-                            end_answers.insert(num, ans_m.as_str().to_ascii_uppercase());
-                        }
-                    }
-                }
-            }
-        }
+        let end_answers = Self::collect_end_answers(&lines, &re_end_answer_block);
 
         let mut groups: Vec<(String, Vec<ExerciseQuestion>)> = Vec::new();
         let mut cur_mat_title = String::new();
         let mut cur_questions: Vec<ExerciseQuestion> = Vec::new();
+        let mut last_seen_q_num: Option<u32> = None;
 
         let mut cur_q_num: Option<u32> = None;
         let mut cur_q_stem = String::new();
@@ -141,9 +135,24 @@ impl ExerciseParser {
                 break;
             }
 
+            // 模式截断：已解析出听力题后遇到非听力大题（如单项填空、完形填空、阅读理解）
+            if last_seen_q_num.is_some() && mode.is_non_listening_section(line) {
+                break;
+            }
+
             // 1. 判断是否是材料分割行
             // 条件：匹配 re_mat 且不包含题号特征，且长度不过长（<= 80 Unicode 字符，避免中文 UTF-8 字节溢出）
             if line.chars().count() <= 80 && re_mat.is_match(line) && !re_stem.is_match(line) {
+                // 若当前已有一级节标题（如"第一节..."/"第二节..."）且尚未收集到题目，
+                // 紧随其后的总说明（如"听下面五段对话。"/"听下面几段材料。"）不覆盖节标题。
+                if cur_q_num.is_none()
+                    && cur_questions.is_empty()
+                    && !cur_mat_title.is_empty()
+                    && Self::is_section_instruction(line)
+                {
+                    continue;
+                }
+
                 flush_current_question(
                     &mut cur_q_num,
                     &mut cur_q_stem,
@@ -195,19 +204,22 @@ impl ExerciseParser {
 
             // 5. 题干行
             if let Some(cap) = re_stem.captures(line) {
-                // 保存上一题
-                flush_current_question(
-                    &mut cur_q_num,
-                    &mut cur_q_stem,
-                    &mut cur_q_opts,
-                    &mut cur_q_ans,
-                    &mut cur_q_expl,
-                    &mut cur_questions,
-                    &end_answers,
-                );
-
                 if let (Some(num_m), Some(stem_m)) = (cap.get(1), cap.get(2)) {
                     if let Ok(num) = num_m.as_str().parse::<u32>() {
+                        if Self::should_stop_at_question(mode, last_seen_q_num, num) {
+                            break;
+                        }
+                        // 保存上一题
+                        flush_current_question(
+                            &mut cur_q_num,
+                            &mut cur_q_stem,
+                            &mut cur_q_opts,
+                            &mut cur_q_ans,
+                            &mut cur_q_expl,
+                            &mut cur_questions,
+                            &end_answers,
+                        );
+                        last_seen_q_num = Some(num);
                         cur_q_num = Some(num);
                         cur_q_stem = stem_m.as_str().to_string();
                     }
@@ -251,30 +263,13 @@ impl ExerciseParser {
             return Vec::new();
         }
 
-        // 若只解析出一个组但没有显式材料标题，且已知有多个材料，进行按题均分或平摊
-        if groups.len() == 1 && groups[0].0 == "材料 1" && known_material_count > 1 {
-            let (_, questions) = groups.remove(0);
-            return Self::group_questions_into_materials(questions, known_material_count);
-        }
+        let groups = mode.apply_grouping(groups, known_material_count);
+        Self::build_material_exercises(groups)
+    }
 
-        // 高考/中考听力典型排版：第一节声明了 N 道小题（如 1~5 题），后随若干长对话材料组。
-        // 若「第一组题数 + 剩余组数 == known_material_count」，说明音频中把第一节的每一小题
-        // 分别切分为了独立短材料，此时将第一组的题目按单题拆分，使之与音频材料完全对齐。
-        if groups.len() > 1 && known_material_count > groups.len() {
-            let first_q_count = groups[0].1.len();
-            if first_q_count > 1 && (first_q_count + groups.len() - 1) == known_material_count {
-                let (first_title, first_questions) = groups.remove(0);
-                let mut expanded = Vec::with_capacity(known_material_count);
-                for q in first_questions {
-                    let title = format!("{first_title} - 第{}题", q.num);
-                    expanded.push((title, vec![q]));
-                }
-                expanded.extend(groups);
-                groups = expanded;
-            }
-        }
-
-        // 构建带有连续 material_ordinal 的 MaterialExercise 列表
+    fn build_material_exercises(
+        groups: Vec<(String, Vec<ExerciseQuestion>)>,
+    ) -> Vec<MaterialExercise> {
         groups
             .into_iter()
             .enumerate()
@@ -282,17 +277,66 @@ impl ExerciseParser {
             .collect()
     }
 
+    fn collect_end_answers(lines: &[&str], re_end_answer_block: &Regex) -> HashMap<u32, String> {
+        let re_item_ans = Regex::new(r"(\d+)[\.、\s\:\-]+([A-Ga-g])").unwrap();
+        let mut end_answers: HashMap<u32, String> = HashMap::new();
+        let mut in_end_answer_block = false;
+
+        for line in lines {
+            if line.is_empty() {
+                continue;
+            }
+            if re_end_answer_block.is_match(line) {
+                in_end_answer_block = true;
+                continue;
+            }
+            if in_end_answer_block {
+                for cap in re_item_ans.captures_iter(line) {
+                    if let (Some(num_m), Some(ans_m)) = (cap.get(1), cap.get(2)) {
+                        if let Ok(num) = num_m.as_str().parse::<u32>() {
+                            // 保留首次出现的答案，避免全卷末尾笔试重编题号（如 1-15）覆盖听力答案
+                            end_answers
+                                .entry(num)
+                                .or_insert_with(|| ans_m.as_str().to_ascii_uppercase());
+                        }
+                    }
+                }
+            }
+        }
+        end_answers
+    }
+
+    fn is_section_instruction(line: &str) -> bool {
+        (line.contains("听下面五段对话")
+            || line.contains("听下面5段对话")
+            || line.contains("听下面几段材料")
+            || line.contains("听下面5段对话或独白"))
+            && !line.contains("回答第")
+    }
+
+    fn should_stop_at_question(mode: ExerciseMode, last_seen: Option<u32>, num: u32) -> bool {
+        let Some(prev) = last_seen else {
+            return false;
+        };
+        if let Some(max_q) = mode.max_question_num() {
+            if num > max_q || num <= prev {
+                return true;
+            }
+        }
+        false
+    }
+
     /// 将一组题目按已知材料数均分或平铺
-    fn group_questions_into_materials(
+    pub(crate) fn split_questions_evenly(
         questions: Vec<ExerciseQuestion>,
         material_count: usize,
-    ) -> Vec<MaterialExercise> {
+    ) -> Vec<(String, Vec<ExerciseQuestion>)> {
         if questions.is_empty() {
             return Vec::new();
         }
         let mat_count = material_count.max(1);
         if mat_count == 1 {
-            return vec![MaterialExercise::new(1, "材料 1", questions)];
+            return vec![("材料 1".to_string(), questions)];
         }
 
         // 尝试均匀切分
@@ -306,11 +350,7 @@ impl ExerciseParser {
             if cur_chunk.is_empty() {
                 break;
             }
-            out.push(MaterialExercise::new(
-                i as u32,
-                format!("材料 {i}"),
-                cur_chunk,
-            ));
+            out.push((format!("材料 {i}"), cur_chunk));
         }
 
         out
