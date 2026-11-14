@@ -1097,7 +1097,7 @@ pub fn cmd_benchmark(sample_path: Option<&str>) -> Result<()> {
                     if !status.success() {
                         #[cfg(windows)]
                         if let Some(code) = status.code() {
-                            if code == 0xC0000135_u32 as i32 || code == -1073741515 {
+                            if lime_asr::is_dll_load_error(code) {
                                 child_err =
                                     Some("缺少 VC++ 运行库 (x64)，请安装 vc_redist.x64.exe".into());
                             } else {

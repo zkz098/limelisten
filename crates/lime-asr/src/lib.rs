@@ -67,6 +67,40 @@ pub fn set_current_thread_below_normal() {
     }
 }
 
+/// 屏蔽 Windows 系统的关键错误弹窗（如子进程缺少 VCRUNTIME140.dll / MSVCP140.dll 时的系统弹窗）。
+///
+/// 子进程默认继承父进程的 ErrorMode；设置 `SEM_FAILCRITICALERRORS` 后，
+/// 缺 DLL 会直接以 `0xC0000135` 退出码返回给调用方，由应用统一提示安装 VC++ 运行库，
+/// 而不会连续弹出多个系统缺少 DLL 对话框。非 Windows 平台无操作。
+pub fn suppress_critical_error_dialogs() {
+    #[cfg(windows)]
+    {
+        use std::sync::Once;
+        static INIT: Once = Once::new();
+        INIT.call_once(|| {
+            extern "system" {
+                fn GetErrorMode() -> u32;
+                fn SetErrorMode(u_mode: u32) -> u32;
+            }
+            const SEM_FAILCRITICALERRORS: u32 = 0x0001;
+            const SEM_NOOPENFILEERRORBOX: u32 = 0x8000;
+            // SAFETY: GetErrorMode / SetErrorMode 为进程级 Win32 API，通过 Once 仅初始化一次。
+            unsafe {
+                let cur = GetErrorMode();
+                SetErrorMode(cur | SEM_FAILCRITICALERRORS | SEM_NOOPENFILEERRORBOX);
+            }
+        });
+    }
+}
+
+/// 判断 Windows 子进程退出码是否表示缺少运行库 DLL（`STATUS_DLL_NOT_FOUND` / `STATUS_ENTRYPOINT_NOT_FOUND`）。
+#[cfg(windows)]
+pub fn is_dll_load_error(code: i32) -> bool {
+    const STATUS_DLL_NOT_FOUND: i32 = 0xC0000135_u32 as i32;
+    const STATUS_ENTRYPOINT_NOT_FOUND: i32 = 0xC0000139_u32 as i32;
+    code == STATUS_DLL_NOT_FOUND || code == STATUS_ENTRYPOINT_NOT_FOUND
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Progress {
     pub percent: f32,
@@ -124,6 +158,7 @@ impl WhisperCli {
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
+            suppress_critical_error_dialogs();
             // CREATE_NO_WINDOW (0x0800_0000): 彻底避免 Windows GUI 模式下转写时弹出黑框终端窗口
             // BELOW_NORMAL_PRIORITY_CLASS (0x0000_4000): 低端机上别让转写把 UI 渲染 / 音频回调抢死
             const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -150,7 +185,7 @@ impl WhisperCli {
         if !status.success() {
             #[cfg(windows)]
             if let Some(code) = status.code() {
-                if code == 0xC0000135_u32 as i32 || code == -1073741515 {
+                if is_dll_load_error(code) {
                     return Err(Error::Asr(
                         "whisper-cli 启动失败 (0xC0000135: 找不到指定模块)。当前系统未安装 Microsoft Visual C++ 2015-2022 运行库 (x64)，请访问 https://aka.ms/vs/17/release/vc_redist.x64.exe 下载安装后重试。".into(),
                     ));

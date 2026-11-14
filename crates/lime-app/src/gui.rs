@@ -294,8 +294,7 @@ fn check_whisper_runnable(exe: &Path) -> Result<(), &'static str> {
         .creation_flags(0x0800_0000);
     match cmd.status() {
         Ok(status) => {
-            let code = status.code();
-            if code == Some(0xC0000135_u32 as i32) || code == Some(-1073741515) {
+            if status.code().is_some_and(lime_asr::is_dll_load_error) {
                 return Err("缺少 VC++ 运行库 (x64)");
             }
             Ok(())
@@ -317,6 +316,20 @@ fn whisper_runnable_cached(state: &mut GuiState, exe: &Path) -> Result<(), Strin
     let result: Result<(), String> = Ok(());
     state.whisper_check = Some((exe.to_path_buf(), mtime, result.clone()));
     result
+}
+
+fn finish_whisper_download(ui: &MainWindow, st: &mut GuiState, success: bool, msg: String) {
+    st.whisper_downloading = None;
+    st.is_downloading_cli.store(false, Ordering::Relaxed);
+    refresh_whisper_ui(ui, st);
+    ui.set_status(msg.into());
+    if success {
+        ui.set_bench_summary(if ui.get_whisper_installed() {
+            "转写引擎已就绪".into()
+        } else {
+            ui.get_whisper_status()
+        });
+    }
 }
 
 fn refresh_whisper_ui(ui: &MainWindow, state: &mut GuiState) {
@@ -707,7 +720,7 @@ fn run_gui_benchmark(tx: Sender<Msg>, audio_path: Option<PathBuf>) {
                     if !status.success() {
                         #[cfg(windows)]
                         if let Some(code) = status.code() {
-                            if code == 0xC0000135_u32 as i32 || code == -1073741515 {
+                            if lime_asr::is_dll_load_error(code) {
                                 child_err = Some("缺少 VC++ 运行库".into());
                             } else {
                                 child_err = Some(format!("exit: {status}"));
@@ -2185,19 +2198,8 @@ pub fn run_with(open: Option<PathBuf>) -> anyhow::Result<()> {
                             st.whisper_downloading = Some((id, progress, status_text));
                             refresh_whisper_ui(&ui, &mut st);
                         }
-                        Msg::WhisperDownloadDone {
-                            id: _,
-                            success,
-                            msg,
-                        } => {
-                            let mut st = state.borrow_mut();
-                            st.whisper_downloading = None;
-                            st.is_downloading_cli.store(false, Ordering::Relaxed);
-                            refresh_whisper_ui(&ui, &mut st);
-                            ui.set_status(msg.into());
-                            if success {
-                                ui.set_bench_summary("转写引擎已就绪".into());
-                            }
+                        Msg::WhisperDownloadDone { success, msg, .. } => {
+                            finish_whisper_download(&ui, &mut state.borrow_mut(), success, msg)
                         }
                         Msg::FolderScanned(files) => {
                             if files.is_empty() {
